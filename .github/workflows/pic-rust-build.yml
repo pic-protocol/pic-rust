@@ -36,14 +36,9 @@ jobs:
       - name: Checkout PIC Protocol
         uses: actions/checkout@v4
 
-      - name: Retrieve MSRV
-        id: msrv
-        run: echo "MSRV=$(cat Cargo.toml | grep -Po '(?<=rust-version = ")([\d\.]+)')" >> $GITHUB_OUTPUT
-
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ steps.msrv.outputs.MSRV }}
           components: rustfmt, clippy
 
       - name: Cache dependencies
@@ -73,14 +68,8 @@ jobs:
       - name: Checkout PIC Protocol
         uses: actions/checkout@v4
 
-      - name: Retrieve MSRV
-        id: msrv
-        run: echo "MSRV=$(cat Cargo.toml | grep -Po '(?<=rust-version = ")([\d\.]+)')" >> $GITHUB_OUTPUT
-
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.msrv.outputs.MSRV }}
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
@@ -92,20 +81,3 @@ jobs:
 
       - name: Test each feature combination
         run: cargo hack test --each-feature --workspace
-
-  # Benchmark (solo su main, non su PR)
-  benchmark:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout PIC Protocol
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run benchmarks
-        run: cargo bench --workspace
