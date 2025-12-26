@@ -1,18 +1,7 @@
-# Copyright 2024 Nitro Agility S.r.l.
+# Copyright 2025 Nitro Agility S.r.l.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# SPDX-License-Identifier: Apache-2.0
+# Licensed under the Apache License, Version 2.0 (the "License")
+# ...
 
 name: Publish to crates.io
 
@@ -25,7 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
+  publish:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Repository
@@ -33,40 +22,17 @@ jobs:
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
 
     - name: Extract Version from Tag
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
 
     - name: Bump version in all Cargo.toml files
       run: |
-        # Root workspace
-        sed -i "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
-        
-        # Sub-crates (quelli che usano version.workspace = true si aggiornano automaticamente)
-        # Se non usi workspace version, aggiorna manualmente:
-        sed -i "s/^version = .*/version = \"${VERSION}\"/" crates/pic-pca/Cargo.toml
-        sed -i "s/^version = .*/version = \"${VERSION}\"/" crates/pic-cat/Cargo.toml
+        sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+        sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" crates/pic-pca/Cargo.toml
+        sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" crates/pic-cat/Cargo.toml
 
-    - name: Update dependency versions (path → version)
-      run: |
-        # pic-cat dipende da pic-pca
-        sed -i "s|pic-pca = { path = \"../pic-pca\" }|pic-pca = \"${VERSION}\"|" crates/pic-cat/Cargo.toml
-        
-        # Root dipende da entrambi
-        sed -i "s|pic-pca = { path = \"crates/pic-pca\" }|pic-pca = \"${VERSION}\"|" Cargo.toml
-        sed -i "s|pic-cat = { path = \"crates/pic-cat\" }|pic-cat = \"${VERSION}\"|" Cargo.toml
-
-    - name: Verify versions updated
-      run: |
-        echo "=== Root Cargo.toml ==="
-        grep -E "^version|pic-pca|pic-cat" Cargo.toml
-        echo "=== pic-pca/Cargo.toml ==="
-        grep "^version" crates/pic-pca/Cargo.toml
-        echo "=== pic-cat/Cargo.toml ==="
-        grep -E "^version|pic-pca" crates/pic-cat/Cargo.toml
-
+    # Build/test PRIMA di modificare dipendenze
     - name: Build workspace
       run: cargo build --release --workspace
 
@@ -77,16 +43,24 @@ jobs:
     - name: Publish pic-pca
       run: cargo publish -p pic-pca --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-    - name: Wait for crates.io propagation
+    - name: Wait for crates.io
       run: sleep 30
 
-    # 2. Pubblica pic-cat (dipende da pic-pca)
+    # 2. Aggiorna e pubblica pic-cat
+    - name: Update pic-cat dependency
+      run: sed -i "s|pic-pca = { path = \"../pic-pca\" }|pic-pca = \"${VERSION}\"|" crates/pic-cat/Cargo.toml
+
     - name: Publish pic-cat
       run: cargo publish -p pic-cat --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-    - name: Wait for crates.io propagation
+    - name: Wait for crates.io
       run: sleep 30
 
-    # 3. Pubblica facade (dipende da tutti)
+    # 3. Aggiorna e pubblica facade
+    - name: Update root dependencies
+      run: |
+        sed -i "s|pic-pca = { path = \"crates/pic-pca\" }|pic-pca = \"${VERSION}\"|" Cargo.toml
+        sed -i "s|pic-cat = { path = \"crates/pic-cat\" }|pic-cat = \"${VERSION}\"|" Cargo.toml
+
     - name: Publish pic-protocol
       run: cargo publish --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
