@@ -28,7 +28,7 @@ jobs:
 
     - name: Bump version in all Cargo.toml files
       run: |
-        sed -i "/\[workspace\.package\]/,/^\[/ s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+        sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
         sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" crates/pic-pca/Cargo.toml
         sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" crates/pic-cat/Cargo.toml
 
@@ -39,21 +39,18 @@ jobs:
         grep -E "^version" crates/pic-pca/Cargo.toml || true
         grep -E "^version" crates/pic-cat/Cargo.toml || true
 
-    # Build/test PRIMA di modificare dipendenze
     - name: Build workspace
       run: cargo build --release --workspace
 
     - name: Run tests
       run: cargo test --workspace
 
-    # 1. Pubblica pic-pca (nessuna dipendenza interna)
     - name: Publish pic-pca
       run: cargo publish -p pic-pca --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
     - name: Wait for crates.io
       run: sleep 30
 
-    # 2. Aggiorna e pubblica pic-cat
     - name: Update pic-cat dependency
       run: sed -i "s|pic-pca = { path = \"../pic-pca\" }|pic-pca = \"${VERSION}\"|" crates/pic-cat/Cargo.toml
 
@@ -63,7 +60,6 @@ jobs:
     - name: Wait for crates.io
       run: sleep 30
 
-    # 3. Aggiorna e pubblica facade
     - name: Update root dependencies
       run: |
         sed -i "s|pic-pca = { path = \"crates/pic-pca\" }|pic-pca = \"${VERSION}\"|" Cargo.toml
