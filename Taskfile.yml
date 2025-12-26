@@ -3,6 +3,12 @@ version: '3'
 tasks:
   # Source code quality
 
+  source:fmt:
+    desc: Format the source code using rustfmt
+    silent: true
+    cmds:
+      - cargo fmt --all
+
   source:tag:push:
     desc: Create and push a git tag interactively
     silent: true
