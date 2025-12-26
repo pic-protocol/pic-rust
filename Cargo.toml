@@ -1,7 +1,7 @@
 [package]
 name = "pic-protocol"
 edition = "2024"
-version = "0.0.0"
+version.workspace = true
 description = "PIC Protocol - Provenance Identity Continuity Protocol"
 license = "Apache-2.0"
 repository = "https://github.com/pic-protocol/pic-rust"
@@ -16,7 +16,8 @@ name = "pic"
 members = ["crates/*"]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
+version = "0.0.0"
 license = "Apache-2.0"
 repository = "https://github.com/pic-protocol/pic-protocol"
 

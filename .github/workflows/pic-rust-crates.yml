@@ -26,11 +26,10 @@ jobs:
     - name: Extract Version from Tag
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
 
-    - name: Bump version in all Cargo.toml files
+    - name: Bump version in Cargo.toml
       run: |
+        # Unica riga version = "..." è in [workspace.package]
         sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
-        sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" crates/pic-pca/Cargo.toml
-        sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" crates/pic-cat/Cargo.toml
 
     - name: Debug - Verify versions
       run: |
