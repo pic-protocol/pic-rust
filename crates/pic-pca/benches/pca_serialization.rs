@@ -1,13 +1,11 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use pic_pca::{
-    PcaPayload, Executor, ExecutorBinding,
-    Provenance, CatProvenance, ExecutorProvenance, KeyMaterial,
-    Constraints, TemporalConstraints,
+    CatProvenance, Constraints, Executor, ExecutorBinding, ExecutorProvenance, KeyMaterial,
+    PcaPayload, Provenance, TemporalConstraints,
 };
 
 fn sample_pca_0() -> PcaPayload {
-    let binding = ExecutorBinding::new()
-        .with("org", "acme-corp");
+    let binding = ExecutorBinding::new().with("org", "acme-corp");
 
     PcaPayload {
         hop: "gateway".into(),
@@ -26,8 +24,7 @@ fn sample_pca_0() -> PcaPayload {
 }
 
 fn sample_pca_n() -> PcaPayload {
-    let binding = ExecutorBinding::new()
-        .with("org", "acme-corp");
+    let binding = ExecutorBinding::new().with("org", "acme-corp");
 
     PcaPayload {
         hop: "storage".into(),
@@ -75,17 +72,13 @@ fn bench_pca(c: &mut Criterion) {
     println!("PCA_n: {} bytes", cbor_n.len());
     println!();
 
-    c.bench_function("pca_0/serialize", |b| {
-        b.iter(|| pca_0.to_cbor().unwrap())
-    });
+    c.bench_function("pca_0/serialize", |b| b.iter(|| pca_0.to_cbor().unwrap()));
 
     c.bench_function("pca_0/deserialize", |b| {
         b.iter(|| PcaPayload::from_cbor(&cbor_0).unwrap())
     });
 
-    c.bench_function("pca_n/serialize", |b| {
-        b.iter(|| pca_n.to_cbor().unwrap())
-    });
+    c.bench_function("pca_n/serialize", |b| b.iter(|| pca_n.to_cbor().unwrap()));
 
     c.bench_function("pca_n/deserialize", |b| {
         b.iter(|| PcaPayload::from_cbor(&cbor_n).unwrap())
@@ -101,8 +94,7 @@ fn bench_chain(c: &mut Criterion) {
                 p_0: "https://idp.example.com/users/alice".into(),
                 ops: vec!["read:/user/*".into(), "write:/user/*".into()],
                 executor: Executor {
-                    binding: ExecutorBinding::new()
-                        .with("org", "acme-corp"),
+                    binding: ExecutorBinding::new().with("org", "acme-corp"),
                 },
                 provenance: None,
                 constraints: None,
@@ -116,8 +108,7 @@ fn bench_chain(c: &mut Criterion) {
                 p_0: r0.p_0.clone(),
                 ops: vec!["read:/user/*".into()],
                 executor: Executor {
-                    binding: ExecutorBinding::new()
-                        .with("org", "acme-corp"),
+                    binding: ExecutorBinding::new().with("org", "acme-corp"),
                 },
                 provenance: Some(Provenance {
                     cat: CatProvenance {
@@ -148,8 +139,7 @@ fn bench_chain(c: &mut Criterion) {
                 p_0: r1.p_0.clone(),
                 ops: vec!["read:/user/alice/*".into()],
                 executor: Executor {
-                    binding: ExecutorBinding::new()
-                        .with("org", "acme-corp"),
+                    binding: ExecutorBinding::new().with("org", "acme-corp"),
                 },
                 provenance: Some(Provenance {
                     cat: CatProvenance {

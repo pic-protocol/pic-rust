@@ -3,9 +3,9 @@
 //! CBOR serialization for COSE payload.
 //! Based on PIC Spec v0.1
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// Generic dynamic key-value map with nested support
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -22,7 +22,8 @@ impl DynamicMap {
     }
 
     pub fn with_map(mut self, key: &str, value: DynamicMap) -> Self {
-        self.0.insert(key.into(), serde_json::to_value(value).unwrap());
+        self.0
+            .insert(key.into(), serde_json::to_value(value).unwrap());
         self
     }
 
@@ -32,7 +33,10 @@ impl DynamicMap {
     }
 
     pub fn with_array(mut self, key: &str, values: Vec<&str>) -> Self {
-        let arr: Vec<Value> = values.into_iter().map(|s| Value::String(s.into())).collect();
+        let arr: Vec<Value> = values
+            .into_iter()
+            .map(|s| Value::String(s.into()))
+            .collect();
         self.0.insert(key.into(), Value::Array(arr));
         self
     }
@@ -166,8 +170,7 @@ mod tests {
     use super::*;
 
     fn sample_pca_0() -> PcaPayload {
-        let binding = ExecutorBinding::new()
-            .with("org", "acme-corp");
+        let binding = ExecutorBinding::new().with("org", "acme-corp");
 
         PcaPayload {
             hop: "gateway".into(),
@@ -186,8 +189,7 @@ mod tests {
     }
 
     fn sample_pca_n() -> PcaPayload {
-        let binding = ExecutorBinding::new()
-            .with("org", "acme-corp");
+        let binding = ExecutorBinding::new().with("org", "acme-corp");
 
         PcaPayload {
             hop: "storage".into(),
@@ -281,8 +283,7 @@ mod tests {
 
     #[test]
     fn test_minimal_executor_binding() {
-        let binding = ExecutorBinding::new()
-            .with("org", "simple-org");
+        let binding = ExecutorBinding::new().with("org", "simple-org");
 
         let pca = PcaPayload {
             hop: "service-a".into(),
@@ -319,7 +320,10 @@ mod tests {
         let decoded = PcaPayload::from_cbor(&cbor).unwrap();
 
         assert_eq!(decoded.executor.binding.get_str("org"), Some("acme-corp"));
-        assert_eq!(decoded.executor.binding.get_str("region"), Some("eu-west-1"));
+        assert_eq!(
+            decoded.executor.binding.get_str("region"),
+            Some("eu-west-1")
+        );
     }
 
     #[test]
@@ -355,16 +359,17 @@ mod tests {
 
     #[test]
     fn test_binding_with_json_value() {
-        let binding = ExecutorBinding::new()
-            .with("org", "acme-corp")
-            .with_value("metadata", serde_json::json!({
+        let binding = ExecutorBinding::new().with("org", "acme-corp").with_value(
+            "metadata",
+            serde_json::json!({
                 "version": "1.2.3",
                 "replicas": 3,
                 "labels": {
                     "app": "gateway",
                     "tier": "frontend"
                 }
-            }));
+            }),
+        );
 
         let pca = PcaPayload {
             hop: "gateway".into(),
