@@ -13,10 +13,18 @@ categories = ["authentication", "cryptography"]
 name = "pic"
 
 [features]
-default = []
+default = ["ed25519"]
+# Crypto
+ed25519 = ["pic-pca/ed25519"]
+p256 = ["pic-pca/p256"]
+p384 = ["pic-pca/p384"]
+crypto-full = ["ed25519", "p256", "p384"]
+# Integrations
 ssi = ["pic-cat/ssi"]
 oauth = ["pic-cat/oauth"]
-full = ["ssi", "oauth"]
+integrations-full = ["ssi", "oauth"]
+# Everything
+full = ["crypto-full", "integrations-full"]
 
 [workspace]
 members = ["crates/*"]
@@ -28,21 +36,26 @@ license = "Apache-2.0"
 repository = "https://github.com/pic-protocol/pic-protocol"
 
 [workspace.dependencies]
-# CLI
-clap = { version = "4", features = ["derive"] }
-
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ciborium = "0.2"
 serde_bytes = "0.11"
 
-# Async
-tokio = { version = "1", features = ["full"] }
+# COSE
+coset = "0.4"
 
 # Error handling
 thiserror = "2"
 anyhow = "1"
+
+# Crypto - Ed25519
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+
+# Crypto - NIST curves
+p256 = { version = "0.13", features = ["ecdsa"] }
+p384 = { version = "0.13", features = ["ecdsa"] }
 
 # SSI - Decentralized Identity (SpruceID)
 ssi = { version = "0.12", features = ["ed25519", "w3c"] }
@@ -50,11 +63,15 @@ ssi = { version = "0.12", features = ["ed25519", "w3c"] }
 # OAuth
 oauth2 = "4.4"
 
+# Async
+tokio = { version = "1", features = ["full"] }
+
 # Utilities
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
-iref = "3"
-static-iref = "3"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
 
 # Benchmark
 criterion = { version = "0.5", features = ["html_reports"] }

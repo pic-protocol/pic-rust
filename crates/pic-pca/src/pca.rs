@@ -1,13 +1,36 @@
-//! PCA (Provenance Causal Authority) model
+/*
+ * Copyright Nitro Agility S.r.l.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! PCA (Provenance Causal Authority) payload model.
 //!
-//! CBOR serialization for COSE payload.
-//! Based on PIC Spec v0.1
+//! Defines the PCA data structure for CBOR serialization within COSE_Sign1 envelope.
+//! Based on PIC Spec v0.1.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// Generic dynamic key-value map with nested support
+// ============================================================================
+// Dynamic Binding
+// ============================================================================
+
+/// Generic dynamic key-value map with nested structure support.
+///
+/// Used for flexible executor bindings that vary by deployment context
+/// (e.g., Kubernetes, cloud provider, SPIFFE federation).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct DynamicMap(pub HashMap<String, Value>);
 
@@ -16,22 +39,26 @@ impl DynamicMap {
         Self(HashMap::new())
     }
 
+    /// Adds a string value.
     pub fn with(mut self, key: &str, value: &str) -> Self {
         self.0.insert(key.into(), Value::String(value.into()));
         self
     }
 
+    /// Adds a nested map.
     pub fn with_map(mut self, key: &str, value: DynamicMap) -> Self {
         self.0
             .insert(key.into(), serde_json::to_value(value).unwrap());
         self
     }
 
+    /// Adds an arbitrary JSON value.
     pub fn with_value(mut self, key: &str, value: Value) -> Self {
         self.0.insert(key.into(), value);
         self
     }
 
+    /// Adds a string array.
     pub fn with_array(mut self, key: &str, values: Vec<&str>) -> Self {
         let arr: Vec<Value> = values
             .into_iter()
@@ -59,16 +86,24 @@ impl DynamicMap {
     }
 }
 
-/// Executor binding - identifies executor in federation context
+/// Executor binding - identifies executor within a federation context.
 pub type ExecutorBinding = DynamicMap;
 
-/// Executor at current hop
+// ============================================================================
+// Executor
+// ============================================================================
+
+/// Executor at the current hop.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Executor {
     pub binding: ExecutorBinding,
 }
 
-/// Key material for signature verification
+// ============================================================================
+// Provenance Chain
+// ============================================================================
+
+/// Key material for signature verification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KeyMaterial {
     #[serde(with = "serde_bytes")]
@@ -76,7 +111,7 @@ pub struct KeyMaterial {
     pub alg: String,
 }
 
-/// CAT provenance - who signed the previous PCA
+/// CAT provenance - identifies who signed the previous PCA.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CatProvenance {
     pub issuer: String,
@@ -85,7 +120,7 @@ pub struct CatProvenance {
     pub key: KeyMaterial,
 }
 
-/// Executor provenance - who signed the PoC
+/// Executor provenance - identifies who signed the PoC.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExecutorProvenance {
     pub issuer: String,
@@ -94,14 +129,20 @@ pub struct ExecutorProvenance {
     pub key: KeyMaterial,
 }
 
-/// Provenance chain - links to previous hop
+/// Provenance chain linking to the previous hop.
+///
+/// Contains both CAT and executor signatures for chain verification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Provenance {
     pub cat: CatProvenance,
     pub executor: ExecutorProvenance,
 }
 
-/// Temporal constraints
+// ============================================================================
+// Constraints
+// ============================================================================
+
+/// Temporal constraints on PCA validity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TemporalConstraints {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,58 +153,71 @@ pub struct TemporalConstraints {
     pub nbf: Option<String>,
 }
 
-/// All constraints
+/// All constraints on PCA validity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Constraints {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temporal: Option<TemporalConstraints>,
 }
 
-/// PCA Payload - signed with COSE_Sign1
+// ============================================================================
+// PCA Payload
+// ============================================================================
+
+/// PCA Payload - the CBOR content signed with COSE_Sign1.
 ///
-/// issuer → COSE header kid
-/// signature → COSE signature
+/// The issuer and signature are stored in the COSE header, not here.
+/// This structure contains only the payload fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PcaPayload {
-    /// Unique identifier for this hop (GUID)
+    /// Unique identifier for this hop
     pub hop: String,
-    /// Immutable origin principal
+    /// Immutable origin principal (p_0)
     pub p_0: String,
     /// Authority set (ops_i ⊆ ops_{i-1})
     pub ops: Vec<String>,
-    /// Current executor
+    /// Current executor binding
     pub executor: Executor,
     /// Causal chain reference (None for PCA_0)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
-    /// Bounds on PCA validity
+    /// Validity constraints
     #[serde(skip_serializing_if = "Option::is_none")]
     pub constraints: Option<Constraints>,
 }
 
 impl PcaPayload {
+    /// Serializes to CBOR bytes.
     pub fn to_cbor(&self) -> Result<Vec<u8>, ciborium::ser::Error<std::io::Error>> {
         let mut buf = Vec::new();
         ciborium::into_writer(self, &mut buf)?;
         Ok(buf)
     }
 
+    /// Deserializes from CBOR bytes.
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, ciborium::de::Error<std::io::Error>> {
         ciborium::from_reader(bytes)
     }
 
+    /// Serializes to JSON string.
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
 
+    /// Serializes to pretty-printed JSON string.
     pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
 
+    /// Deserializes from JSON string.
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {

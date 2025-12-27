@@ -1,9 +1,30 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+/*
+ * Copyright Nitro Agility S.r.l.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! PCA Serialization Benchmark
+//!
+//! Measures CBOR serialization and deserialization performance for PCA payloads.
+
+use criterion::{criterion_group, criterion_main, Criterion};
 use pic_pca::{
     CatProvenance, Constraints, Executor, ExecutorBinding, ExecutorProvenance, KeyMaterial,
     PcaPayload, Provenance, TemporalConstraints,
 };
 
+/// Creates a PCA_0 (origin) payload without provenance.
 fn sample_pca_0() -> PcaPayload {
     let binding = ExecutorBinding::new().with("org", "acme-corp");
 
@@ -23,6 +44,7 @@ fn sample_pca_0() -> PcaPayload {
     }
 }
 
+/// Creates a PCA_n (subsequent hop) payload with full provenance chain.
 fn sample_pca_n() -> PcaPayload {
     let binding = ExecutorBinding::new().with("org", "acme-corp");
 
@@ -59,6 +81,7 @@ fn sample_pca_n() -> PcaPayload {
     }
 }
 
+/// Benchmarks PCA serialization and deserialization.
 fn bench_pca(c: &mut Criterion) {
     let pca_0 = sample_pca_0();
     let pca_n = sample_pca_n();
@@ -85,10 +108,11 @@ fn bench_pca(c: &mut Criterion) {
     });
 }
 
+/// Benchmarks a 3-hop PCA chain (serialize + deserialize at each hop).
 fn bench_chain(c: &mut Criterion) {
     c.bench_function("chain/3_hops", |b| {
         b.iter(|| {
-            // HOP: Gateway
+            // Hop 0: Gateway
             let pca_0 = PcaPayload {
                 hop: "gateway".into(),
                 p_0: "https://idp.example.com/users/alice".into(),
@@ -102,7 +126,7 @@ fn bench_chain(c: &mut Criterion) {
             let b0 = pca_0.to_cbor().unwrap();
             let r0 = PcaPayload::from_cbor(&b0).unwrap();
 
-            // HOP: Archive
+            // Hop 1: Archive (ops reduced)
             let pca_1 = PcaPayload {
                 hop: "archive".into(),
                 p_0: r0.p_0.clone(),
@@ -133,7 +157,7 @@ fn bench_chain(c: &mut Criterion) {
             let b1 = pca_1.to_cbor().unwrap();
             let r1 = PcaPayload::from_cbor(&b1).unwrap();
 
-            // HOP: Storage
+            // Hop 2: Storage (ops further reduced)
             let pca_2 = PcaPayload {
                 hop: "storage".into(),
                 p_0: r1.p_0.clone(),

@@ -9,15 +9,41 @@ repository.workspace = true
 [lib]
 name = "pic_pca"
 
+[features]
+default = ["ed25519"]
+ed25519 = ["dep:ed25519-dalek", "dep:rand"]
+p256 = ["dep:p256"]
+p384 = ["dep:p384"]
+full = ["ed25519", "p256", "p384"]
+
 [dependencies]
+# Core
 serde.workspace = true
 serde_json.workspace = true
 serde_bytes.workspace = true
 ciborium.workspace = true
+coset.workspace = true
+thiserror.workspace = true
+
+# Crypto - optional
+ed25519-dalek = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+p256 = { workspace = true, optional = true }
+p384 = { workspace = true, optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion.workspace = true
+ed25519-dalek.workspace = true
+rand.workspace = true
 
 [[bench]]
 name = "pca_serialization"
+harness = false
+
+[[bench]]
+name = "pca_cose_benchmark"
+harness = false
+
+[[bench]]
+name = "poc_cose_benchmark"
 harness = false
