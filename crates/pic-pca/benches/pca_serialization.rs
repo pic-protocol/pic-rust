@@ -14,22 +14,26 @@
  * limitations under the License.
  */
 
-//! PCA Serialization Benchmark
+//! PCA serialization benchmarks with structured output.
 //!
-//! Measures CBOR serialization and deserialization performance for PCA payloads.
+//! Run with: cargo run --example pca_serialization --release
 
-use criterion::{Criterion, criterion_group, criterion_main};
 use pic_pca::{
-    CatProvenance, Constraints, Executor, ExecutorBinding, ExecutorProvenance, KeyMaterial,
+    CatProvenance, Constraints, Executor, ExecutorBinding, ExecutorProvenance,
     PcaPayload, Provenance, TemporalConstraints,
 };
+use std::time::Instant;
 
-/// Creates a PCA_0 (origin) payload without provenance.
+const ITERATIONS: u32 = 10000;
+
 fn sample_pca_0() -> PcaPayload {
-    let binding = ExecutorBinding::new().with("org", "acme-corp");
+    let binding = ExecutorBinding::new()
+        .with("federation", "https://trust.example.com")
+        .with("namespace", "prod")
+        .with("service", "api-gateway");
 
     PcaPayload {
-        hop: "gateway".into(),
+        hop: 0,
         p_0: "https://idp.example.com/users/alice".into(),
         ops: vec!["read:/user/*".into(), "write:/user/*".into()],
         executor: Executor { binding },
@@ -44,31 +48,25 @@ fn sample_pca_0() -> PcaPayload {
     }
 }
 
-/// Creates a PCA_n (subsequent hop) payload with full provenance chain.
 fn sample_pca_n() -> PcaPayload {
-    let binding = ExecutorBinding::new().with("org", "acme-corp");
+    let binding = ExecutorBinding::new()
+        .with("federation", "https://trust.example.com")
+        .with("namespace", "prod")
+        .with("service", "storage-service");
 
     PcaPayload {
-        hop: "storage".into(),
+        hop: 3,
         p_0: "https://idp.example.com/users/alice".into(),
         ops: vec!["read:/user/*".into()],
         executor: Executor { binding },
         provenance: Some(Provenance {
             cat: CatProvenance {
-                issuer: "https://cat.acme-corp.com".into(),
-                signature: vec![0u8; 64],
-                key: KeyMaterial {
-                    public_key: vec![0u8; 32],
-                    alg: "EdDSA".into(),
-                },
+                kid: "https://cat.example.com/keys/1".into(),
+                signature: vec![0xAB; 64],
             },
             executor: ExecutorProvenance {
-                issuer: "spiffe://acme-corp/archive".into(),
-                signature: vec![0u8; 64],
-                key: KeyMaterial {
-                    public_key: vec![0u8; 32],
-                    alg: "EdDSA".into(),
-                },
+                kid: "spiffe://trust.example.com/ns/prod/sa/archive".into(),
+                signature: vec![0xCD; 64],
             },
         }),
         constraints: Some(Constraints {
@@ -81,115 +79,76 @@ fn sample_pca_n() -> PcaPayload {
     }
 }
 
-/// Benchmarks PCA serialization and deserialization.
-fn bench_pca(c: &mut Criterion) {
-    let pca_0 = sample_pca_0();
-    let pca_n = sample_pca_n();
-    let cbor_0 = pca_0.to_cbor().unwrap();
-    let cbor_n = pca_n.to_cbor().unwrap();
-
-    println!();
-    println!("PCA Size");
-    println!("--------");
-    println!("PCA_0: {} bytes", cbor_0.len());
-    println!("PCA_n: {} bytes", cbor_n.len());
-    println!();
-
-    c.bench_function("pca_0/serialize", |b| b.iter(|| pca_0.to_cbor().unwrap()));
-
-    c.bench_function("pca_0/deserialize", |b| {
-        b.iter(|| PcaPayload::from_cbor(&cbor_0).unwrap())
-    });
-
-    c.bench_function("pca_n/serialize", |b| b.iter(|| pca_n.to_cbor().unwrap()));
-
-    c.bench_function("pca_n/deserialize", |b| {
-        b.iter(|| PcaPayload::from_cbor(&cbor_n).unwrap())
-    });
+fn bench_avg_ns<F>(iterations: u32, mut f: F) -> u64
+where
+    F: FnMut(),
+{
+    let start = Instant::now();
+    for _ in 0..iterations {
+        f();
+    }
+    let elapsed = start.elapsed();
+    elapsed.as_nanos() as u64 / iterations as u64
 }
 
-/// Benchmarks a 3-hop PCA chain (serialize + deserialize at each hop).
-fn bench_chain(c: &mut Criterion) {
-    c.bench_function("chain/3_hops", |b| {
-        b.iter(|| {
-            // Hop 0: Gateway
-            let pca_0 = PcaPayload {
-                hop: "gateway".into(),
-                p_0: "https://idp.example.com/users/alice".into(),
-                ops: vec!["read:/user/*".into(), "write:/user/*".into()],
-                executor: Executor {
-                    binding: ExecutorBinding::new().with("org", "acme-corp"),
-                },
-                provenance: None,
-                constraints: None,
-            };
-            let b0 = pca_0.to_cbor().unwrap();
-            let r0 = PcaPayload::from_cbor(&b0).unwrap();
-
-            // Hop 1: Archive (ops reduced)
-            let pca_1 = PcaPayload {
-                hop: "archive".into(),
-                p_0: r0.p_0.clone(),
-                ops: vec!["read:/user/*".into()],
-                executor: Executor {
-                    binding: ExecutorBinding::new().with("org", "acme-corp"),
-                },
-                provenance: Some(Provenance {
-                    cat: CatProvenance {
-                        issuer: "https://cat.acme-corp.com".into(),
-                        signature: vec![1u8; 64],
-                        key: KeyMaterial {
-                            public_key: vec![1u8; 32],
-                            alg: "EdDSA".into(),
-                        },
-                    },
-                    executor: ExecutorProvenance {
-                        issuer: "spiffe://acme-corp/gateway".into(),
-                        signature: vec![1u8; 64],
-                        key: KeyMaterial {
-                            public_key: vec![1u8; 32],
-                            alg: "EdDSA".into(),
-                        },
-                    },
-                }),
-                constraints: None,
-            };
-            let b1 = pca_1.to_cbor().unwrap();
-            let r1 = PcaPayload::from_cbor(&b1).unwrap();
-
-            // Hop 2: Storage (ops further reduced)
-            let pca_2 = PcaPayload {
-                hop: "storage".into(),
-                p_0: r1.p_0.clone(),
-                ops: vec!["read:/user/alice/*".into()],
-                executor: Executor {
-                    binding: ExecutorBinding::new().with("org", "acme-corp"),
-                },
-                provenance: Some(Provenance {
-                    cat: CatProvenance {
-                        issuer: "https://cat.acme-corp.com".into(),
-                        signature: vec![2u8; 64],
-                        key: KeyMaterial {
-                            public_key: vec![2u8; 32],
-                            alg: "EdDSA".into(),
-                        },
-                    },
-                    executor: ExecutorProvenance {
-                        issuer: "spiffe://acme-corp/archive".into(),
-                        signature: vec![2u8; 64],
-                        key: KeyMaterial {
-                            public_key: vec![2u8; 32],
-                            alg: "EdDSA".into(),
-                        },
-                    },
-                }),
-                constraints: None,
-            };
-            let b2 = pca_2.to_cbor().unwrap();
-            PcaPayload::from_cbor(&b2).unwrap()
-        })
-    });
+fn format_time(ns: u64) -> String {
+    if ns >= 1_000_000 {
+        format!("{:.2} ms", ns as f64 / 1_000_000.0)
+    } else if ns >= 1_000 {
+        format!("{:.2} µs", ns as f64 / 1_000.0)
+    } else {
+        format!("{} ns", ns)
+    }
 }
 
-criterion_group!(benches, bench_pca, bench_chain);
-criterion_main!(benches);
+fn bench_pca(name: &str, pca: &PcaPayload) {
+    let cbor_bytes = pca.to_cbor().unwrap();
+    let json_bytes = pca.to_json().unwrap();
+
+    let cbor_ser = bench_avg_ns(ITERATIONS, || { let _ = pca.to_cbor().unwrap(); });
+    let json_ser = bench_avg_ns(ITERATIONS, || { let _ = pca.to_json().unwrap(); });
+
+    let cbor_de = bench_avg_ns(ITERATIONS, || { let _ = PcaPayload::from_cbor(&cbor_bytes).unwrap(); });
+    let json_de = bench_avg_ns(ITERATIONS, || { let _ = PcaPayload::from_json(&json_bytes).unwrap(); });
+
+    let cbor_rt = cbor_ser + cbor_de;
+    let json_rt = json_ser + json_de;
+
+    println!();
+    println!("\x1b[33m{}\x1b[0m", "=".repeat(50));
+    println!("\x1b[1m{}\x1b[0m", name);
+    println!("\x1b[33m{}\x1b[0m", "=".repeat(50));
+
+    println!();
+    println!("Payload: {} bytes CBOR -> {} bytes JSON", cbor_bytes.len(), json_bytes.len());
+
+    println!();
+    println!("\x1b[36mCBOR\x1b[0m");
+    println!("    Serialize               {}", format_time(cbor_ser));
+    println!("    Deserialize             {}", format_time(cbor_de));
+    println!("    \x1b[32mROUNDTRIP               {} ({:.2} µs)\x1b[0m", format_time(cbor_rt), cbor_rt as f64 / 1000.0);
+
+    println!();
+    println!("\x1b[36mJSON\x1b[0m");
+    println!("    Serialize               {}", format_time(json_ser));
+    println!("    Deserialize             {}", format_time(json_de));
+    println!("    \x1b[32mROUNDTRIP               {} ({:.2} µs)\x1b[0m", format_time(json_rt), json_rt as f64 / 1000.0);
+
+    println!();
+    println!("\x1b[36mComparison (JSON/CBOR ratio)\x1b[0m");
+    println!("    Size                    {:.1}x", json_bytes.len() as f64 / cbor_bytes.len() as f64);
+    println!("    Serialize               {:.1}x", json_ser as f64 / cbor_ser as f64);
+    println!("    Deserialize             {:.1}x", json_de as f64 / cbor_de as f64);
+    println!("    Roundtrip               {:.1}x", json_rt as f64 / cbor_rt as f64);
+}
+
+fn main() {
+    println!();
+    println!("\x1b[1mPCA Serialization Benchmark\x1b[0m");
+    println!("Iterations: {}", ITERATIONS);
+
+    bench_pca("PCA_0 (origin, no provenance)", &sample_pca_0());
+    bench_pca("PCA_n (hop 3, with provenance)", &sample_pca_n());
+
+    println!();
+}

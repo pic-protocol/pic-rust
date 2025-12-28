@@ -17,15 +17,17 @@
 //! PCA (Provenance Causal Authority) payload model.
 //!
 //! Defines the PCA data structure for CBOR serialization within COSE_Sign1 envelope.
-//! Based on PIC Spec v0.1.
+//! Based on PIC Spec v0.2.
+//!
+//! The PCA represents the causally derived authority at each execution hop.
+//! Key properties:
+//! - `p_0` is immutable throughout the chain (origin principal)
+//! - `ops` can only decrease (monotonicity: ops_i ⊆ ops_{i-1})
+//! - `provenance` links to the previous hop via `kid` references
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-
-// ============================================================================
-// Dynamic Binding
-// ============================================================================
 
 /// Generic dynamic key-value map with nested structure support.
 ///
@@ -89,66 +91,56 @@ impl DynamicMap {
 /// Executor binding - identifies executor within a federation context.
 pub type ExecutorBinding = DynamicMap;
 
-// ============================================================================
-// Executor
-// ============================================================================
-
 /// Executor at the current hop.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Executor {
     pub binding: ExecutorBinding,
 }
 
-// ============================================================================
-// Provenance Chain
-// ============================================================================
-
-/// Key material for signature verification.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct KeyMaterial {
-    #[serde(with = "serde_bytes")]
-    pub public_key: Vec<u8>,
-    pub alg: String,
-}
-
 /// CAT provenance - identifies who signed the previous PCA.
+///
+/// Uses `kid` (Key ID) which can be resolved to obtain the public key.
+/// The kid can be a SPIFFE ID, DID, URL, or any resolvable identifier.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CatProvenance {
-    pub issuer: String,
+    /// Key identifier (SPIFFE ID, DID, URL, etc.) - resolvable to public key
+    pub kid: String,
+    /// Signature bytes from the predecessor PCA
     #[serde(with = "serde_bytes")]
     pub signature: Vec<u8>,
-    pub key: KeyMaterial,
 }
 
 /// Executor provenance - identifies who signed the PoC.
+///
+/// Uses `kid` which references the key in the executor's attestation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExecutorProvenance {
-    pub issuer: String,
+    /// Key identifier (SPIFFE ID, DID, URL, etc.) - matches attestation
+    pub kid: String,
+    /// Signature bytes from the PoC
     #[serde(with = "serde_bytes")]
     pub signature: Vec<u8>,
-    pub key: KeyMaterial,
 }
 
 /// Provenance chain linking to the previous hop.
 ///
-/// Contains both CAT and executor signatures for chain verification.
+/// Contains both CAT and executor references for chain verification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Provenance {
     pub cat: CatProvenance,
     pub executor: ExecutorProvenance,
 }
 
-// ============================================================================
-// Constraints
-// ============================================================================
-
 /// Temporal constraints on PCA validity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TemporalConstraints {
+    /// Issued at timestamp (ISO 8601)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub iat: Option<String>,
+    /// Expiration timestamp (ISO 8601)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exp: Option<String>,
+    /// Not before timestamp (ISO 8601)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nbf: Option<String>,
 }
@@ -160,21 +152,17 @@ pub struct Constraints {
     pub temporal: Option<TemporalConstraints>,
 }
 
-// ============================================================================
-// PCA Payload
-// ============================================================================
-
 /// PCA Payload - the CBOR content signed with COSE_Sign1.
 ///
-/// The issuer and signature are stored in the COSE header, not here.
+/// The `kid` (key identifier) and `alg` are stored in the COSE protected header.
 /// This structure contains only the payload fields.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PcaPayload {
-    /// Unique identifier for this hop
-    pub hop: String,
-    /// Immutable origin principal (p_0)
+    /// Position in causal chain (0 for PCA_0)
+    pub hop: u32,
+    /// Immutable origin principal (p_0) - never changes throughout the chain
     pub p_0: String,
-    /// Authority set (ops_i ⊆ ops_{i-1})
+    /// Authority set (ops_i ⊆ ops_{i-1}) - can only decrease
     pub ops: Vec<String>,
     /// Current executor binding
     pub executor: Executor,
@@ -213,11 +201,17 @@ impl PcaPayload {
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
-}
 
-// ============================================================================
-// Tests
-// ============================================================================
+    /// Returns true if this is the origin PCA (hop 0).
+    pub fn is_origin(&self) -> bool {
+        self.hop == 0
+    }
+
+    /// Checks if the given ops are a subset of this PCA's ops (monotonicity check).
+    pub fn allows_ops(&self, requested_ops: &[String]) -> bool {
+        requested_ops.iter().all(|op| self.ops.contains(op))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -227,7 +221,7 @@ mod tests {
         let binding = ExecutorBinding::new().with("org", "acme-corp");
 
         PcaPayload {
-            hop: "gateway".into(),
+            hop: 0,
             p_0: "https://idp.example.com/users/alice".into(),
             ops: vec!["read:/user/*".into(), "write:/user/*".into()],
             executor: Executor { binding },
@@ -246,26 +240,18 @@ mod tests {
         let binding = ExecutorBinding::new().with("org", "acme-corp");
 
         PcaPayload {
-            hop: "storage".into(),
+            hop: 2,
             p_0: "https://idp.example.com/users/alice".into(),
             ops: vec!["read:/user/*".into()],
             executor: Executor { binding },
             provenance: Some(Provenance {
                 cat: CatProvenance {
-                    issuer: "https://cat.acme-corp.com".into(),
+                    kid: "https://cat.acme-corp.com/keys/1".into(),
                     signature: vec![0u8; 64],
-                    key: KeyMaterial {
-                        public_key: vec![0u8; 32],
-                        alg: "EdDSA".into(),
-                    },
                 },
                 executor: ExecutorProvenance {
-                    issuer: "spiffe://acme-corp/archive".into(),
+                    kid: "spiffe://acme-corp/ns/prod/sa/archive".into(),
                     signature: vec![0u8; 64],
-                    key: KeyMaterial {
-                        public_key: vec![0u8; 32],
-                        alg: "EdDSA".into(),
-                    },
                 },
             }),
             constraints: Some(Constraints {
@@ -284,8 +270,9 @@ mod tests {
         let cbor = pca.to_cbor().unwrap();
         let decoded = PcaPayload::from_cbor(&cbor).unwrap();
         assert_eq!(pca, decoded);
-        assert_eq!(decoded.hop, "gateway");
+        assert_eq!(decoded.hop, 0);
         assert!(decoded.provenance.is_none());
+        assert!(decoded.is_origin());
     }
 
     #[test]
@@ -294,8 +281,18 @@ mod tests {
         let cbor = pca.to_cbor().unwrap();
         let decoded = PcaPayload::from_cbor(&cbor).unwrap();
         assert_eq!(pca, decoded);
-        assert_eq!(decoded.hop, "storage");
+        assert_eq!(decoded.hop, 2);
         assert!(decoded.provenance.is_some());
+        assert!(!decoded.is_origin());
+    }
+
+    #[test]
+    fn test_provenance_uses_kid() {
+        let pca = sample_pca_n();
+        let provenance = pca.provenance.unwrap();
+
+        assert!(provenance.cat.kid.starts_with("https://"));
+        assert!(provenance.executor.kid.starts_with("spiffe://"));
     }
 
     #[test]
@@ -319,13 +316,6 @@ mod tests {
     }
 
     #[test]
-    fn test_json_output() {
-        let pca = sample_pca_n();
-        let json = pca.to_json_pretty().unwrap();
-        println!("{}", json);
-    }
-
-    #[test]
     fn test_monotonicity_ops_reduced() {
         let pca_0 = sample_pca_0();
         let pca_n = sample_pca_n();
@@ -336,11 +326,20 @@ mod tests {
     }
 
     #[test]
+    fn test_allows_ops() {
+        let pca = sample_pca_0();
+
+        assert!(pca.allows_ops(&["read:/user/*".into()]));
+        assert!(pca.allows_ops(&["read:/user/*".into(), "write:/user/*".into()]));
+        assert!(!pca.allows_ops(&["read:/sys/*".into()]));
+    }
+
+    #[test]
     fn test_minimal_executor_binding() {
         let binding = ExecutorBinding::new().with("org", "simple-org");
 
         let pca = PcaPayload {
-            hop: "service-a".into(),
+            hop: 1,
             p_0: "https://idp.example.com/users/alice".into(),
             ops: vec!["read:/user/*".into()],
             executor: Executor { binding },
@@ -362,7 +361,7 @@ mod tests {
             .with("env", "prod");
 
         let pca = PcaPayload {
-            hop: "api-gateway".into(),
+            hop: 0,
             p_0: "https://idp.example.com/users/alice".into(),
             ops: vec!["invoke:*".into()],
             executor: Executor { binding },
@@ -392,16 +391,13 @@ mod tests {
             .with_array("regions", vec!["eu-west-1", "eu-west-2"]);
 
         let pca = PcaPayload {
-            hop: "k8s-service".into(),
+            hop: 0,
             p_0: "https://idp.example.com/users/alice".into(),
             ops: vec!["read:*".into()],
             executor: Executor { binding },
             provenance: None,
             constraints: None,
         };
-
-        let json = pca.to_json_pretty().unwrap();
-        println!("{}", json);
 
         let cbor = pca.to_cbor().unwrap();
         let decoded = PcaPayload::from_cbor(&cbor).unwrap();
@@ -426,16 +422,13 @@ mod tests {
         );
 
         let pca = PcaPayload {
-            hop: "gateway".into(),
+            hop: 0,
             p_0: "https://idp.example.com/users/alice".into(),
             ops: vec!["read:*".into()],
             executor: Executor { binding },
             provenance: None,
             constraints: None,
         };
-
-        let json = pca.to_json_pretty().unwrap();
-        println!("{}", json);
 
         let cbor = pca.to_cbor().unwrap();
         let decoded = PcaPayload::from_cbor(&cbor).unwrap();

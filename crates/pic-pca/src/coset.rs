@@ -18,13 +18,20 @@
 //!
 //! Provides a generic `CoseSigned<T>` wrapper for signing and verifying
 //! any CBOR-serializable payload using COSE_Sign1 envelope (RFC 9052).
+//!
+//! PIC-specific extensions:
+//! - Challenge in protected header for freshness binding (PCC response)
+//! - kid used as key identifier (SPIFFE ID, DID, URL, etc.)
 
-use coset::{CborSerializable, CoseSign1, CoseSign1Builder, HeaderBuilder, iana};
-use serde::{Serialize, de::DeserializeOwned};
+use coset::{iana, CborSerializable, CoseSign1, CoseSign1Builder, HeaderBuilder, Label};
+use serde::{de::DeserializeOwned, Serialize};
 
-// ============================================================================
-// Core Types
-// ============================================================================
+/// Custom COSE header label for PIC challenge.
+/// 
+/// Using -65537 which is in the private use range (values < -65536).
+/// This allows the challenge to be included in the protected header
+/// and covered by the COSE signature.
+pub const HEADER_CHALLENGE: i64 = -65537;
 
 /// Generic COSE_Sign1 signed envelope.
 ///
@@ -97,22 +104,29 @@ impl SigningAlgorithm {
     }
 }
 
-// ============================================================================
-// Core Implementation
-// ============================================================================
-
 impl<T> CoseSigned<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    /// Returns the issuer (kid) from the protected header.
-    pub fn issuer(&self) -> Option<String> {
+    /// Returns the key identifier (kid) from the protected header.
+    /// 
+    /// The kid can be a SPIFFE ID, DID, URL, or any resolvable identifier
+    /// that can be used to obtain the public key for verification.
+    pub fn kid(&self) -> Option<String> {
         let kid = &self.inner.protected.header.key_id;
         if kid.is_empty() {
             None
         } else {
             String::from_utf8(kid.clone()).ok()
         }
+    }
+
+    /// Returns the issuer (kid) from the protected header.
+    /// 
+    /// Alias for `kid()` for backward compatibility.
+    #[deprecated(since = "0.2.0", note = "Use kid() instead")]
+    pub fn issuer(&self) -> Option<String> {
+        self.kid()
     }
 
     /// Returns the signing algorithm from the protected header.
@@ -129,6 +143,26 @@ where
             }
             _ => None,
         }
+    }
+
+    /// Returns the challenge from the protected header (if present).
+    /// 
+    /// The challenge is used for freshness binding in PIC PoC.
+    /// It is included in the protected header and covered by the signature.
+    pub fn challenge(&self) -> Option<Vec<u8>> {
+        self.inner
+            .protected
+            .header
+            .rest
+            .iter()
+            .find_map(|(label, value)| {
+                if let Label::Int(HEADER_CHALLENGE) = label {
+                    if let ciborium::Value::Bytes(bytes) = value {
+                        return Some(bytes.clone());
+                    }
+                }
+                None
+            })
     }
 
     /// Serializes the signed envelope to CBOR bytes.
@@ -168,8 +202,32 @@ where
     /// The closure receives the to-be-signed bytes and returns the signature.
     pub fn sign_with<F>(
         payload: &T,
-        issuer: &str,
+        kid: &str,
         alg: SigningAlgorithm,
+        sign_fn: F,
+    ) -> Result<Self, CoseError>
+    where
+        F: FnOnce(&[u8]) -> Result<Vec<u8>, CoseError>,
+    {
+        Self::sign_with_challenge(payload, kid, alg, None, sign_fn)
+    }
+
+    /// Signs a payload with an optional challenge in the protected header.
+    ///
+    /// The challenge is included in the protected header and covered by the signature,
+    /// providing freshness binding for PIC PoC.
+    ///
+    /// # Arguments
+    /// * `payload` - The payload to sign
+    /// * `kid` - Key identifier (SPIFFE ID, DID, URL, etc.)
+    /// * `alg` - Signing algorithm
+    /// * `challenge` - Optional challenge bytes (PCC nonce)
+    /// * `sign_fn` - Signing function
+    pub fn sign_with_challenge<F>(
+        payload: &T,
+        kid: &str,
+        alg: SigningAlgorithm,
+        challenge: Option<&[u8]>,
         sign_fn: F,
     ) -> Result<Self, CoseError>
     where
@@ -179,10 +237,18 @@ where
         ciborium::into_writer(payload, &mut cbor_payload)
             .map_err(|e| CoseError::CborSerialize(e.to_string()))?;
 
-        let protected = HeaderBuilder::new()
+        let mut header_builder = HeaderBuilder::new()
             .algorithm(alg.to_iana())
-            .key_id(issuer.as_bytes().to_vec())
-            .build();
+            .key_id(kid.as_bytes().to_vec());
+
+        if let Some(ch) = challenge {
+            header_builder = header_builder.value(
+                HEADER_CHALLENGE,
+                ciborium::Value::Bytes(ch.to_vec()),
+            );
+        }
+
+        let protected = header_builder.build();
 
         let sign1 = CoseSign1Builder::new()
             .protected(protected)
@@ -203,7 +269,6 @@ where
     where
         F: FnOnce(&[u8], &[u8]) -> Result<(), CoseError>,
     {
-        // coset passes (sig, data), we reorder to (data, sig) for consistency
         self.inner
             .verify_signature(&[], |sig, data| verify_fn(data, sig))?;
 
@@ -238,10 +303,6 @@ impl From<coset::CoseError> for CoseError {
     }
 }
 
-// ============================================================================
-// Ed25519 Implementation
-// ============================================================================
-
 #[cfg(feature = "ed25519")]
 mod ed25519_impl {
     use super::*;
@@ -254,23 +315,32 @@ mod ed25519_impl {
         /// Signs payload with Ed25519. Algorithm is set to EdDSA automatically.
         pub fn sign_ed25519(
             payload: &T,
-            issuer: &str,
+            kid: &str,
             signing_key: &SigningKey,
         ) -> Result<Self, CoseError> {
-            Self::sign_with(payload, issuer, SigningAlgorithm::EdDSA, |data| {
+            Self::sign_ed25519_with_challenge(payload, kid, None, signing_key)
+        }
+
+        /// Signs payload with Ed25519 and an optional challenge.
+        pub fn sign_ed25519_with_challenge(
+            payload: &T,
+            kid: &str,
+            challenge: Option<&[u8]>,
+            signing_key: &SigningKey,
+        ) -> Result<Self, CoseError> {
+            Self::sign_with_challenge(payload, kid, SigningAlgorithm::EdDSA, challenge, |data| {
                 let sig = signing_key.sign(data);
                 Ok(sig.to_bytes().to_vec())
             })
         }
 
-        /// Verifies payload with Ed25519. Returns error if algorithm is not EdDSA.
+        /// Verifies Ed25519 signature and returns the payload.
         pub fn verify_ed25519(&self, verifying_key: &VerifyingKey) -> Result<T, CoseError> {
             self.check_algorithm(SigningAlgorithm::EdDSA)?;
 
             self.verify_with(|data, sig| {
-                let signature =
-                    Signature::from_slice(sig).map_err(|_| CoseError::InvalidSignatureLength)?;
-
+                let signature = Signature::from_slice(sig)
+                    .map_err(|_| CoseError::InvalidSignatureLength)?;
                 verifying_key
                     .verify(data, &signature)
                     .map_err(|_| CoseError::VerificationFailed)
@@ -279,16 +349,10 @@ mod ed25519_impl {
     }
 }
 
-// ============================================================================
-// P-256 (ES256) Implementation
-// ============================================================================
-
 #[cfg(feature = "p256")]
 mod p256_impl {
     use super::*;
-    use p256::ecdsa::{
-        Signature, SigningKey, VerifyingKey, signature::Signer, signature::Verifier,
-    };
+    use p256::ecdsa::{signature::Signer, signature::Verifier, Signature, SigningKey, VerifyingKey};
 
     impl<T> CoseSigned<T>
     where
@@ -297,23 +361,32 @@ mod p256_impl {
         /// Signs payload with P-256. Algorithm is set to ES256 automatically.
         pub fn sign_p256(
             payload: &T,
-            issuer: &str,
+            kid: &str,
             signing_key: &SigningKey,
         ) -> Result<Self, CoseError> {
-            Self::sign_with(payload, issuer, SigningAlgorithm::ES256, |data| {
+            Self::sign_p256_with_challenge(payload, kid, None, signing_key)
+        }
+
+        /// Signs payload with P-256 and an optional challenge.
+        pub fn sign_p256_with_challenge(
+            payload: &T,
+            kid: &str,
+            challenge: Option<&[u8]>,
+            signing_key: &SigningKey,
+        ) -> Result<Self, CoseError> {
+            Self::sign_with_challenge(payload, kid, SigningAlgorithm::ES256, challenge, |data| {
                 let sig: Signature = signing_key.sign(data);
                 Ok(sig.to_bytes().to_vec())
             })
         }
 
-        /// Verifies payload with P-256. Returns error if algorithm is not ES256.
+        /// Verifies P-256 signature and returns the payload.
         pub fn verify_p256(&self, verifying_key: &VerifyingKey) -> Result<T, CoseError> {
             self.check_algorithm(SigningAlgorithm::ES256)?;
 
             self.verify_with(|data, sig| {
-                let signature =
-                    Signature::from_slice(sig).map_err(|_| CoseError::InvalidSignatureLength)?;
-
+                let signature = Signature::from_slice(sig)
+                    .map_err(|_| CoseError::InvalidSignatureLength)?;
                 verifying_key
                     .verify(data, &signature)
                     .map_err(|_| CoseError::VerificationFailed)
@@ -322,16 +395,10 @@ mod p256_impl {
     }
 }
 
-// ============================================================================
-// P-384 (ES384) Implementation
-// ============================================================================
-
 #[cfg(feature = "p384")]
 mod p384_impl {
     use super::*;
-    use p384::ecdsa::{
-        Signature, SigningKey, VerifyingKey, signature::Signer, signature::Verifier,
-    };
+    use p384::ecdsa::{signature::Signer, signature::Verifier, Signature, SigningKey, VerifyingKey};
 
     impl<T> CoseSigned<T>
     where
@@ -340,23 +407,32 @@ mod p384_impl {
         /// Signs payload with P-384. Algorithm is set to ES384 automatically.
         pub fn sign_p384(
             payload: &T,
-            issuer: &str,
+            kid: &str,
             signing_key: &SigningKey,
         ) -> Result<Self, CoseError> {
-            Self::sign_with(payload, issuer, SigningAlgorithm::ES384, |data| {
+            Self::sign_p384_with_challenge(payload, kid, None, signing_key)
+        }
+
+        /// Signs payload with P-384 and an optional challenge.
+        pub fn sign_p384_with_challenge(
+            payload: &T,
+            kid: &str,
+            challenge: Option<&[u8]>,
+            signing_key: &SigningKey,
+        ) -> Result<Self, CoseError> {
+            Self::sign_with_challenge(payload, kid, SigningAlgorithm::ES384, challenge, |data| {
                 let sig: Signature = signing_key.sign(data);
                 Ok(sig.to_bytes().to_vec())
             })
         }
 
-        /// Verifies payload with P-384. Returns error if algorithm is not ES384.
+        /// Verifies P-384 signature and returns the payload.
         pub fn verify_p384(&self, verifying_key: &VerifyingKey) -> Result<T, CoseError> {
             self.check_algorithm(SigningAlgorithm::ES384)?;
 
             self.verify_with(|data, sig| {
-                let signature =
-                    Signature::from_slice(sig).map_err(|_| CoseError::InvalidSignatureLength)?;
-
+                let signature = Signature::from_slice(sig)
+                    .map_err(|_| CoseError::InvalidSignatureLength)?;
                 verifying_key
                     .verify(data, &signature)
                     .map_err(|_| CoseError::VerificationFailed)
@@ -364,10 +440,6 @@ mod p384_impl {
         }
     }
 }
-
-// ============================================================================
-// Type Aliases
-// ============================================================================
 
 use crate::pca::PcaPayload;
 use crate::poc::PocPayload;
@@ -378,10 +450,6 @@ pub type SignedPca = CoseSigned<PcaPayload>;
 /// COSE-signed PoC payload.
 pub type SignedPoc = CoseSigned<PocPayload>;
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,7 +457,7 @@ mod tests {
 
     fn sample_pca() -> PcaPayload {
         PcaPayload {
-            hop: "gateway".into(),
+            hop: 0,
             p_0: "https://idp.example.com/users/alice".into(),
             ops: vec!["read:/user/*".into()],
             executor: Executor {
@@ -412,8 +480,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(signed.issuer(), Some("https://cat.example.com".into()));
+        assert_eq!(signed.kid(), Some("https://cat.example.com".into()));
         assert_eq!(signed.algorithm(), Some(SigningAlgorithm::EdDSA));
+        assert!(signed.challenge().is_none());
 
         let verified = signed.verify_with(|_data, _sig| Ok(())).unwrap();
 
@@ -422,19 +491,60 @@ mod tests {
     }
 
     #[test]
-    fn test_roundtrip_bytes() {
+    fn test_sign_with_challenge() {
+        let pca = sample_pca();
+        let challenge = b"nonce12345";
+
+        let signed: SignedPca = CoseSigned::sign_with_challenge(
+            &pca,
+            "spiffe://example.com/service",
+            SigningAlgorithm::EdDSA,
+            Some(challenge),
+            |_data| Ok(vec![0xAB; 64]),
+        )
+        .unwrap();
+
+        assert_eq!(signed.kid(), Some("spiffe://example.com/service".into()));
+        assert_eq!(signed.challenge(), Some(challenge.to_vec()));
+
+        let verified = signed.verify_with(|_data, _sig| Ok(())).unwrap();
+        assert_eq!(verified.hop, pca.hop);
+    }
+
+    #[test]
+    fn test_challenge_none_when_not_provided() {
         let pca = sample_pca();
 
-        let signed: SignedPca =
-            CoseSigned::sign_with(&pca, "issuer-1", SigningAlgorithm::ES256, |_| {
-                Ok(vec![0xCD; 64])
-            })
-            .unwrap();
+        let signed: SignedPca = CoseSigned::sign_with(
+            &pca,
+            "issuer",
+            SigningAlgorithm::EdDSA,
+            |_| Ok(vec![0xAB; 64]),
+        )
+        .unwrap();
+
+        assert!(signed.challenge().is_none());
+    }
+
+    #[test]
+    fn test_roundtrip_bytes_with_challenge() {
+        let pca = sample_pca();
+        let challenge = b"freshness-nonce";
+
+        let signed: SignedPca = CoseSigned::sign_with_challenge(
+            &pca,
+            "did:web:example.com",
+            SigningAlgorithm::ES256,
+            Some(challenge),
+            |_| Ok(vec![0xCD; 64]),
+        )
+        .unwrap();
 
         let bytes = signed.to_bytes().unwrap();
         let restored: SignedPca = CoseSigned::from_bytes(&bytes).unwrap();
 
-        assert_eq!(restored.issuer(), Some("issuer-1".into()));
+        assert_eq!(restored.kid(), Some("did:web:example.com".into()));
+        assert_eq!(restored.challenge(), Some(challenge.to_vec()));
     }
 
     #[test]
@@ -448,7 +558,7 @@ mod tests {
             .unwrap();
 
         let extracted = signed.payload_unverified().unwrap();
-        assert_eq!(extracted.hop, "gateway");
+        assert_eq!(extracted.hop, 0);
     }
 
     #[test]
@@ -471,6 +581,32 @@ mod tests {
 
         assert_eq!(verified.hop, pca.hop);
         assert_eq!(verified.p_0, pca.p_0);
+    }
+
+    #[test]
+    #[cfg(feature = "ed25519")]
+    fn test_ed25519_with_challenge() {
+        use ed25519_dalek::SigningKey;
+        use rand::rngs::OsRng;
+
+        let pca = sample_pca();
+        let challenge = b"pcc-nonce-abc123";
+
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let verifying_key = signing_key.verifying_key();
+
+        let signed: SignedPca = CoseSigned::sign_ed25519_with_challenge(
+            &pca,
+            "spiffe://trust.example.com/ns/prod/sa/service-a",
+            Some(challenge),
+            &signing_key,
+        )
+        .unwrap();
+
+        assert_eq!(signed.challenge(), Some(challenge.to_vec()));
+
+        let verified = signed.verify_ed25519(&verifying_key).unwrap();
+        assert_eq!(verified.hop, pca.hop);
     }
 
     #[test]
@@ -532,6 +668,32 @@ mod tests {
 
     #[test]
     #[cfg(feature = "p256")]
+    fn test_p256_with_challenge() {
+        use p256::ecdsa::SigningKey;
+        use rand::rngs::OsRng;
+
+        let pca = sample_pca();
+        let challenge = b"p256-challenge";
+
+        let signing_key = SigningKey::random(&mut OsRng);
+        let verifying_key = signing_key.verifying_key();
+
+        let signed: SignedPca = CoseSigned::sign_p256_with_challenge(
+            &pca,
+            "p256-issuer",
+            Some(challenge),
+            &signing_key,
+        )
+        .unwrap();
+
+        assert_eq!(signed.challenge(), Some(challenge.to_vec()));
+
+        let verified = signed.verify_p256(verifying_key).unwrap();
+        assert_eq!(verified.hop, pca.hop);
+    }
+
+    #[test]
+    #[cfg(feature = "p256")]
     fn test_p256_wrong_key_fails() {
         use p256::ecdsa::SigningKey;
         use rand::rngs::OsRng;
@@ -539,7 +701,7 @@ mod tests {
         let pca = sample_pca();
 
         let signing_key = SigningKey::random(&mut OsRng);
-        let wrong_signing_key = SigningKey::random(&mut OsRng); // <- binding
+        let wrong_signing_key = SigningKey::random(&mut OsRng);
         let wrong_verifying_key = wrong_signing_key.verifying_key();
 
         let signed: SignedPca = CoseSigned::sign_p256(&pca, "issuer", &signing_key).unwrap();
@@ -577,7 +739,7 @@ mod tests {
         let pca = sample_pca();
 
         let signing_key = SigningKey::random(&mut OsRng);
-        let wrong_signing_key = SigningKey::random(&mut OsRng); // <- binding
+        let wrong_signing_key = SigningKey::random(&mut OsRng);
         let wrong_verifying_key = wrong_signing_key.verifying_key();
 
         let signed: SignedPca = CoseSigned::sign_p384(&pca, "issuer", &signing_key).unwrap();

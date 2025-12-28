@@ -42,16 +42,22 @@ tasks:
         - cargo bench --package pic-pca      
     silent: true
 
-  pca-bench-pca-coset:
+  pca-bench-sz:
     dir:  ./
     cmds:
-        - cargo bench -p pic-pca --bench pca_cose_benchmark -- sign_ed25519
+        - cargo bench -p pic-pca --bench pca_serialization
     silent: true
 
-  pca-bench-poc-coset:
+  pca-bench-pca:
     dir:  ./
     cmds:
-        - cargo bench -p pic-pca --bench poc_cose_benchmark -- sign_ed25519
+        - cargo bench -p pic-pca --bench pca_benchmark -- sign_ed25519
+    silent: true
+
+  pca-bench-poc:
+    dir:  ./
+    cmds:
+        - cargo bench -p pic-pca --bench poc_benchmark -- sign_ed25519
     silent: true
 
   cat-test:
