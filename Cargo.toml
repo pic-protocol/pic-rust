@@ -39,7 +39,8 @@ repository = "https://github.com/pic-protocol/pic-protocol"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ciborium = "0.2"
+ciborium = "0.2.2"
+cbor4ii = { version = "1.2.2", features = ["serde1"] }
 serde_bytes = "0.11"
 
 # COSE
@@ -61,7 +62,7 @@ p384 = { version = "0.13", features = ["ecdsa"] }
 ssi = { version = "0.12", features = ["ed25519", "w3c"] }
 
 # OAuth
-oauth2 = "4.4"
+oauth2 = "5.0"
 
 # Async
 tokio = { version = "1", features = ["full"] }
@@ -74,7 +75,7 @@ uuid = { version = "1", features = ["v4"] }
 clap = { version = "4", features = ["derive"] }
 
 # Benchmark
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [dependencies]
 pic-pca = { path = "crates/pic-pca" }

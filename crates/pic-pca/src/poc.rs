@@ -171,15 +171,13 @@ pub struct PocPayload {
 
 impl PocPayload {
     /// Serializes to CBOR bytes.
-    pub fn to_cbor(&self) -> Result<Vec<u8>, ciborium::ser::Error<std::io::Error>> {
-        let mut buf = Vec::new();
-        ciborium::into_writer(self, &mut buf)?;
-        Ok(buf)
+    pub fn to_cbor(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        cbor4ii::serde::to_vec(Vec::new(), self).map_err(|e| e.into())
     }
 
     /// Deserializes from CBOR bytes.
-    pub fn from_cbor(bytes: &[u8]) -> Result<Self, ciborium::de::Error<std::io::Error>> {
-        ciborium::from_reader(bytes)
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        cbor4ii::serde::from_slice(bytes).map_err(|e| e.into())
     }
 
     /// Serializes to JSON string.
