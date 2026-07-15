@@ -2,7 +2,7 @@
 name = "pic-protocol"
 edition = "2024"
 version.workspace = true
-description = "PIC Protocol - Provenance Identity Continuity Protocol"
+description = "PIC Protocol - Provenance Identity Continuity"
 license = "Apache-2.0"
 repository = "https://github.com/pic-protocol/pic-rust"
 documentation = "https://docs.rs/pic-protocol"

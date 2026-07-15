@@ -456,7 +456,7 @@ mod tests {
             .attestation_with_pop("custom_attestation", vec![0x05], vec![0x06])
             .build()
             .unwrap();
-
+ 
         assert_eq!(poc.attestations.len(), 4);
         assert!(poc.find_attestation("spiffe_svid").unwrap().has_pop());
         assert!(!poc.find_attestation("vp").unwrap().has_pop());
