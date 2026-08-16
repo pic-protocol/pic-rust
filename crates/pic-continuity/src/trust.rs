@@ -49,6 +49,17 @@ pub trait ArtifactSigner {
 pub trait ArtifactVerifier {
     /// `true` when `signature` is a valid signature over `data`.
     fn verify(&self, data: &[u8], signature: &[u8]) -> bool;
+
+    /// The JOSE `alg` this verifier expects for JWS artifacts, when known.
+    fn expected_jws_algorithm(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The COSE algorithm this verifier expects for COSE artifacts, when
+    /// known.
+    fn expected_cose_algorithm(&self) -> Option<SigningAlgorithm> {
+        None
+    }
 }
 
 #[cfg(feature = "ed25519")]
@@ -112,6 +123,14 @@ mod ed25519_impl {
                 return false;
             };
             self.key.verify(data, &sig).is_ok()
+        }
+
+        fn expected_jws_algorithm(&self) -> Option<&'static str> {
+            Some("EdDSA")
+        }
+
+        fn expected_cose_algorithm(&self) -> Option<SigningAlgorithm> {
+            Some(SigningAlgorithm::EdDSA)
         }
     }
 }

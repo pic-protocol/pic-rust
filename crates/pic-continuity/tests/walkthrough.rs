@@ -146,9 +146,11 @@ fn ctx() -> SettlementContext {
 /// Initializes checkpoint 0 and returns (settled issue, trusted store).
 fn initialize(realm: &Realm) -> (pic_continuity::verifier::SettledIssue, InMemoryCheckpoints) {
     let map = IndexedAuthorityMap::from_logical(&walkthrough_logical()).unwrap();
-    let pca0 =
-        PicPcaPayload::new(0, map, b"challenge-0".to_vec()).with_lineage_id("walkthrough-lineage");
-    let issued = issue_settled(pca0, &realm.signer, &ctx()).unwrap();
+    let context = ctx();
+    let pca0 = PicPcaPayload::new(0, map, b"challenge-0".to_vec())
+        .with_lineage_id("walkthrough-lineage")
+        .with_expires_at(context.exp.unwrap());
+    let issued = issue_settled(pca0, &realm.signer, &context).unwrap();
 
     let mut store = InMemoryCheckpoints::new();
     store.insert(issued.pca_bytes.clone());
@@ -167,10 +169,12 @@ fn end_to_end_two_hops() {
         state0.checkpoint.lineage_id.as_deref(),
         Some("walkthrough-lineage")
     );
+    assert_eq!(state0.checkpoint.expires_at, ctx().exp);
     assert_eq!(
         decode_token(&settled0.token).unwrap().claims.jti.as_deref(),
         Some("walkthrough-lineage")
     );
+    assert_eq!(decode_token(&settled0.token).unwrap().claims.exp, ctx().exp);
     assert_eq!(state0.checkpoint.context_of_authority.invariants.len(), 2);
     assert_eq!(
         state0.checkpoint.context_of_authority.invariants[&0].0,
@@ -209,6 +213,10 @@ fn end_to_end_two_hops() {
         Some("walkthrough-lineage")
     );
     assert_eq!(
+        decode_token(&candidate1.token).unwrap().claims.exp,
+        ctx().exp
+    );
+    assert_eq!(
         candidate1
             .transition
             .attenuations
@@ -238,10 +246,12 @@ fn end_to_end_two_hops() {
         state1.checkpoint.lineage_id.as_deref(),
         Some("walkthrough-lineage")
     );
+    assert_eq!(state1.checkpoint.expires_at, ctx().exp);
     assert_eq!(
         decode_token(&settled1.token).unwrap().claims.jti.as_deref(),
         Some("walkthrough-lineage")
     );
+    assert_eq!(decode_token(&settled1.token).unwrap().claims.exp, ctx().exp);
     assert_eq!(state1.checkpoint.context_of_authority.invariants.len(), 1);
     // storage:save re-materialized at section-local index 0.
     assert_eq!(
@@ -297,10 +307,12 @@ fn end_to_end_two_hops() {
         state2.checkpoint.lineage_id.as_deref(),
         Some("walkthrough-lineage")
     );
+    assert_eq!(state2.checkpoint.expires_at, ctx().exp);
     assert_eq!(
         decode_token(&settled2.token).unwrap().claims.jti.as_deref(),
         Some("walkthrough-lineage")
     );
+    assert_eq!(decode_token(&settled2.token).unwrap().claims.exp, ctx().exp);
     // Zero executable authority; the checkpoint and its contract remain.
     assert!(state2.checkpoint.context_of_authority.invariants.is_empty());
     assert_eq!(
@@ -409,6 +421,19 @@ fn settlement_rejections() {
     assert!(matches!(
         expect_reject(auth.settle(&missing_jti, &ctx())),
         RejectReason::Malformed(message) if message.contains("jti")
+    ));
+
+    let candidate = build_candidate(&state0.pca_bytes, base_request(), &worker1, None).unwrap();
+    let mut decoded = decode_token(&candidate.token).unwrap();
+    decoded.claims.exp = Some(ctx().exp.unwrap() + 1);
+    let wrong_exp = sign_claims_with_typ(
+        &decoded.claims,
+        pic_continuity::FORMAT_PIC_TOKEN_JWT,
+        &worker1,
+    );
+    assert!(matches!(
+        expect_reject(auth.settle(&wrong_exp, &ctx())),
+        RejectReason::Malformed(message) if message.contains("exp")
     ));
 
     // A bitmap referencing a nonexistent index is unbuildable by the prover
@@ -619,6 +644,7 @@ fn issue_settled_rejects_invalid_checkpoint_payloads() {
     let empty_contract = PicPcaPayload {
         profile: pic_continuity::PROFILE_0_2.into(),
         lineage_id: None,
+        expires_at: None,
         position: 0,
         context_of_authority: IndexedAuthorityMap::default(),
         challenge: PcaChallenge {
@@ -630,5 +656,12 @@ fn issue_settled_rejects_invalid_checkpoint_payloads() {
         Err(ContinuityError::Reject(
             RejectReason::EmptyExecutionContract
         ))
+    ));
+
+    let exp_mismatch =
+        PicPcaPayload::new(0, map, b"challenge-0".to_vec()).with_expires_at(ctx().exp.unwrap() + 1);
+    assert!(matches!(
+        issue_settled(exp_mismatch, &realm.signer, &ctx()),
+        Err(ContinuityError::Reject(RejectReason::Malformed(message))) if message.contains("exp")
     ));
 }

@@ -125,6 +125,7 @@ pub fn expected_algorithms_for_jwk(jwk: &Value) -> Result<ExpectedAlgorithms, Jw
 /// Deliberately opaque: it prints what it is, never the key material it holds.
 pub struct JwkVerifier {
     inner: Key,
+    expected: ExpectedAlgorithms,
 }
 
 impl std::fmt::Debug for JwkVerifier {
@@ -176,6 +177,14 @@ impl ArtifactVerifier for JwkVerifier {
             _ => false,
         }
     }
+
+    fn expected_jws_algorithm(&self) -> Option<&'static str> {
+        Some(self.expected.jose)
+    }
+
+    fn expected_cose_algorithm(&self) -> Option<SigningAlgorithm> {
+        self.expected.cose
+    }
 }
 
 /// Builds a verifier from a published JWK.
@@ -194,9 +203,9 @@ pub fn public_key_from_jwk(jwk: &Value) -> Result<JwkVerifier, JwkError> {
     let x = coordinate(jwk, "x")?;
 
     match expected.jose {
-        "EdDSA" => ed25519_from_x(x),
-        "ES256" => p256_from_coordinates(x, coordinate(jwk, "y")?),
-        "ES384" => p384_from_coordinates(x, coordinate(jwk, "y")?),
+        "EdDSA" => ed25519_from_x(x, expected),
+        "ES256" => p256_from_coordinates(x, coordinate(jwk, "y")?, expected),
+        "ES384" => p384_from_coordinates(x, coordinate(jwk, "y")?, expected),
         other => Err(JwkError::Unsupported(other.to_owned())),
     }
 }
@@ -206,7 +215,7 @@ pub fn public_key_from_jwk(jwk: &Value) -> Result<JwkVerifier, JwkError> {
 // actually run.
 
 #[cfg(feature = "ed25519")]
-fn ed25519_from_x(x: Vec<u8>) -> Result<JwkVerifier, JwkError> {
+fn ed25519_from_x(x: Vec<u8>, expected: ExpectedAlgorithms) -> Result<JwkVerifier, JwkError> {
     let bytes: [u8; 32] = x
         .try_into()
         .map_err(|_| JwkError::WrongLength("an Ed25519 `x` is not 32 bytes".to_owned()))?;
@@ -215,47 +224,66 @@ fn ed25519_from_x(x: Vec<u8>) -> Result<JwkVerifier, JwkError> {
 
     Ok(JwkVerifier {
         inner: Key::Ed25519(Box::new(key)),
+        expected,
     })
 }
 
 #[cfg(not(feature = "ed25519"))]
-fn ed25519_from_x(_x: Vec<u8>) -> Result<JwkVerifier, JwkError> {
+fn ed25519_from_x(_x: Vec<u8>, _expected: ExpectedAlgorithms) -> Result<JwkVerifier, JwkError> {
     Err(JwkError::Unsupported(
         "Ed25519: enable the `ed25519` feature".to_owned(),
     ))
 }
 
 #[cfg(feature = "p256")]
-fn p256_from_coordinates(x: Vec<u8>, y: Vec<u8>) -> Result<JwkVerifier, JwkError> {
+fn p256_from_coordinates(
+    x: Vec<u8>,
+    y: Vec<u8>,
+    expected: ExpectedAlgorithms,
+) -> Result<JwkVerifier, JwkError> {
     let point = sec1_point(&x, &y, 32, "P-256")?;
     let key = p256::ecdsa::VerifyingKey::from_sec1_bytes(&point)
         .map_err(|error| JwkError::WrongLength(error.to_string()))?;
 
     Ok(JwkVerifier {
         inner: Key::P256(Box::new(key)),
+        expected,
     })
 }
 
 #[cfg(not(feature = "p256"))]
-fn p256_from_coordinates(_x: Vec<u8>, _y: Vec<u8>) -> Result<JwkVerifier, JwkError> {
+fn p256_from_coordinates(
+    _x: Vec<u8>,
+    _y: Vec<u8>,
+    _expected: ExpectedAlgorithms,
+) -> Result<JwkVerifier, JwkError> {
     Err(JwkError::Unsupported(
         "P-256: enable the `p256` feature".to_owned(),
     ))
 }
 
 #[cfg(feature = "p384")]
-fn p384_from_coordinates(x: Vec<u8>, y: Vec<u8>) -> Result<JwkVerifier, JwkError> {
+fn p384_from_coordinates(
+    x: Vec<u8>,
+    y: Vec<u8>,
+    expected: ExpectedAlgorithms,
+) -> Result<JwkVerifier, JwkError> {
     let point = sec1_point(&x, &y, 48, "P-384")?;
     let key = p384::ecdsa::VerifyingKey::from_sec1_bytes(&point)
         .map_err(|error| JwkError::WrongLength(error.to_string()))?;
 
     Ok(JwkVerifier {
         inner: Key::P384(Box::new(key)),
+        expected,
     })
 }
 
 #[cfg(not(feature = "p384"))]
-fn p384_from_coordinates(_x: Vec<u8>, _y: Vec<u8>) -> Result<JwkVerifier, JwkError> {
+fn p384_from_coordinates(
+    _x: Vec<u8>,
+    _y: Vec<u8>,
+    _expected: ExpectedAlgorithms,
+) -> Result<JwkVerifier, JwkError> {
     Err(JwkError::Unsupported(
         "P-384: enable the `p384` feature".to_owned(),
     ))

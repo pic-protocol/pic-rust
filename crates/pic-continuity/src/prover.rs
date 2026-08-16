@@ -159,6 +159,7 @@ pub fn build_candidate(
     claims.iss = request.iss;
     claims.aud = request.aud;
     claims.iat = request.iat;
+    claims.exp = checkpoint.expires_at;
     claims.jti = checkpoint.lineage_id.clone();
     let token = sign_token(&claims, workload)?;
 

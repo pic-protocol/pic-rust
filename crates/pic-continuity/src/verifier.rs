@@ -70,6 +70,7 @@ pub fn verify_settled(
 ) -> Result<SettledState, ContinuityError> {
     let decoded = decode_token(token)?;
     check_token_type(&decoded)?;
+    check_expected_jws_algorithm(&decoded, realm, "PIC Token JWT")?;
     if !realm.verify(&decoded.signing_input, &decoded.signature) {
         return Err(RejectReason::RealmSignature("PIC Token JWT").into());
     }
@@ -78,6 +79,7 @@ pub fn verify_settled(
 
     let continuity_bytes = claims.root_bytes()?;
     let continuity_cose = PicContinuityCose::from_bytes(&continuity_bytes)?;
+    check_expected_cose_algorithm(continuity_cose.algorithm(), realm, "PIC Continuity COSE")?;
     let continuity: PicContinuityPayload = continuity_cose
         .verify_with(|data, sig| {
             if realm.verify(data, sig) {
@@ -93,6 +95,7 @@ pub fn verify_settled(
 
     let pca_bytes = continuity.root.pca.clone();
     let pca_cose = PicPcaCose::from_bytes(&pca_bytes)?;
+    check_expected_cose_algorithm(pca_cose.algorithm(), realm, "PIC PCA COSE")?;
     let checkpoint: PicPcaPayload = pca_cose
         .verify_with(|data, sig| {
             if realm.verify(data, sig) {
@@ -103,6 +106,7 @@ pub fn verify_settled(
         })
         .map_err(|_| RejectReason::RealmSignature("PIC PCA COSE"))?;
     checkpoint.validate()?;
+    check_exp_matches_checkpoint(&claims, &checkpoint, "PIC Token JWT")?;
 
     Ok(SettledState {
         claims,
@@ -156,6 +160,16 @@ pub fn issue_settled(
     ctx: &SettlementContext,
 ) -> Result<SettledIssue, ContinuityError> {
     checkpoint.validate()?;
+    let exp = match (checkpoint.expires_at, ctx.exp) {
+        (Some(checkpoint_exp), Some(context_exp)) if checkpoint_exp != context_exp => {
+            return Err(RejectReason::Malformed(
+                "settlement context exp does not match pca.expires_at".to_owned(),
+            )
+            .into());
+        }
+        (Some(checkpoint_exp), _) => Some(checkpoint_exp),
+        (None, context_exp) => context_exp,
+    };
 
     let pca_cose: PicPcaCose =
         CoseSigned::sign_with(&checkpoint, realm.kid(), realm.cose_algorithm(), |data| {
@@ -175,7 +189,7 @@ pub fn issue_settled(
     claims.sub = ctx.sub.clone();
     claims.aud = ctx.aud.clone();
     claims.iat = ctx.iat;
-    claims.exp = ctx.exp;
+    claims.exp = exp;
     if let (Some(checkpoint_lineage), Some(context_jti)) = (&checkpoint.lineage_id, &ctx.jti)
         && checkpoint_lineage != context_jti
     {
@@ -275,6 +289,11 @@ impl SettlementAuthority<'_> {
 
         // 11. Verify the three workload signatures with that key and their
         //     signer consistency.
+        check_expected_cose_algorithm(
+            transition_cose.algorithm(),
+            workload.as_ref(),
+            "PIC Continuity Transition COSE",
+        )?;
         transition_cose
             .verify_with(|data, sig| {
                 if workload.verify(data, sig) {
@@ -284,6 +303,11 @@ impl SettlementAuthority<'_> {
                 }
             })
             .map_err(|_| RejectReason::WorkloadSignature("PIC Continuity Transition COSE"))?;
+        check_expected_cose_algorithm(
+            continuity_cose.algorithm(),
+            workload.as_ref(),
+            "candidate PIC Continuity COSE",
+        )?;
         continuity_cose
             .verify_with(|data, sig| {
                 if workload.verify(data, sig) {
@@ -293,6 +317,7 @@ impl SettlementAuthority<'_> {
                 }
             })
             .map_err(|_| RejectReason::WorkloadSignature("candidate PIC Continuity COSE"))?;
+        check_expected_jws_algorithm(&decoded, workload.as_ref(), "candidate PIC Token JWT")?;
         if !workload.verify(&decoded.signing_input, &decoded.signature) {
             return Err(RejectReason::WorkloadSignature("candidate PIC Token JWT").into());
         }
@@ -324,6 +349,7 @@ impl SettlementAuthority<'_> {
                 }
             }
         }
+        check_exp_matches_checkpoint(&decoded.claims, &checkpoint, "candidate PIC Token JWT")?;
 
         // 13. Recompute SHA-256(exact root.pca bytes) and compare.
         continuity.check_root_hash()?;
@@ -393,7 +419,8 @@ impl SettlementAuthority<'_> {
             next_authority,
             transition.challenge.next_challenge.clone(),
         )
-        .with_optional_lineage_id(checkpoint.lineage_id.clone());
+        .with_optional_lineage_id(checkpoint.lineage_id.clone())
+        .with_optional_expires_at(checkpoint.expires_at);
         issue_settled(next_checkpoint, self.realm, ctx)
     }
 }
@@ -419,5 +446,60 @@ fn check_claims_profile(claims: &PicTokenClaims) -> Result<(), RejectReason> {
             expected: crate::PROFILE_0_2.to_string(),
             got: claims.profile.clone(),
         })
+    }
+}
+
+fn check_expected_jws_algorithm(
+    decoded: &DecodedToken,
+    verifier: &dyn ArtifactVerifier,
+    artifact: &'static str,
+) -> Result<(), RejectReason> {
+    let Some(expected) = verifier.expected_jws_algorithm() else {
+        return Ok(());
+    };
+    if decoded.alg == expected {
+        return Ok(());
+    }
+    Err(RejectReason::Malformed(format!(
+        "{artifact} alg must be {expected}, got {}",
+        decoded.alg
+    )))
+}
+
+fn check_expected_cose_algorithm(
+    actual: Option<crate::cose::SigningAlgorithm>,
+    verifier: &dyn ArtifactVerifier,
+    artifact: &'static str,
+) -> Result<(), RejectReason> {
+    let Some(expected) = verifier.expected_cose_algorithm() else {
+        return Ok(());
+    };
+    if actual == Some(expected) {
+        return Ok(());
+    }
+    Err(RejectReason::Malformed(format!(
+        "{artifact} alg must be {expected}, got {}",
+        actual
+            .map(|algorithm| algorithm.to_string())
+            .unwrap_or_else(|| "None".to_owned())
+    )))
+}
+
+fn check_exp_matches_checkpoint(
+    claims: &PicTokenClaims,
+    checkpoint: &PicPcaPayload,
+    artifact: &'static str,
+) -> Result<(), RejectReason> {
+    let Some(expires_at) = checkpoint.expires_at else {
+        return Ok(());
+    };
+    match claims.exp {
+        Some(exp) if exp == expires_at => Ok(()),
+        Some(exp) => Err(RejectReason::Malformed(format!(
+            "{artifact} exp does not match pca.expires_at: expected {expires_at}, got {exp}"
+        ))),
+        None => Err(RejectReason::Malformed(format!(
+            "{artifact} is missing exp for pca.expires_at"
+        ))),
     }
 }

@@ -43,6 +43,14 @@ pub struct PicPcaPayload {
     /// offline inspectors one correlation handle that survives advancement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lineage_id: Option<String>,
+    /// Absolute NumericDate after which this lineage should no longer be
+    /// advanced or accepted as a live token.
+    ///
+    /// When present, the same value is mirrored into PIC Token JWT `exp`. It is
+    /// fixed at initialization and preserved by advancement, so exchanging a
+    /// candidate cannot extend authority by minting a fresh token lifetime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
     /// Position of this checkpoint in its lineage, starting at `0`.
     pub position: u64,
     /// The canonical Indexed Authority Map in force at this checkpoint.
@@ -58,6 +66,7 @@ impl PicPcaPayload {
         Self {
             profile: crate::PROFILE_0_2.to_string(),
             lineage_id: None,
+            expires_at: None,
             position,
             context_of_authority: context,
             challenge: PcaChallenge { next_challenge },
@@ -76,6 +85,18 @@ impl PicPcaPayload {
         self
     }
 
+    /// Adds the absolute lineage expiration mirrored into PIC Token JWT `exp`.
+    pub fn with_expires_at(mut self, expires_at: i64) -> Self {
+        self.expires_at = Some(expires_at);
+        self
+    }
+
+    /// Carries an absolute lineage expiration when the predecessor had one.
+    pub fn with_optional_expires_at(mut self, expires_at: Option<i64>) -> Self {
+        self.expires_at = expires_at;
+        self
+    }
+
     /// Rejects the payload unless `profile` is [`crate::PROFILE_0_2`].
     pub fn check_profile(&self) -> Result<(), RejectReason> {
         check_profile("pic-pca+cose", &self.profile)
@@ -90,6 +111,11 @@ impl PicPcaPayload {
         if self.lineage_id.as_deref().is_some_and(str::is_empty) {
             return Err(RejectReason::Malformed(
                 "pca.lineage_id must not be empty".to_owned(),
+            ));
+        }
+        if self.expires_at.is_some_and(|expires_at| expires_at <= 0) {
+            return Err(RejectReason::Malformed(
+                "pca.expires_at must be a positive NumericDate".to_owned(),
             ));
         }
         self.context_of_authority.validate()
@@ -139,12 +165,34 @@ mod tests {
     }
 
     #[test]
+    fn expires_at_roundtrips_when_present() {
+        let pca =
+            PicPcaPayload::new(0, sample_map(), b"challenge-0".to_vec()).with_expires_at(1234);
+        let mut buf = Vec::new();
+        ciborium::into_writer(&pca, &mut buf).unwrap();
+        let decoded: PicPcaPayload = ciborium::from_reader(buf.as_slice()).unwrap();
+
+        assert_eq!(decoded.expires_at, Some(1234));
+        assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
     fn empty_lineage_id_is_rejected() {
         let pca = PicPcaPayload::new(0, sample_map(), b"challenge-0".to_vec()).with_lineage_id("");
 
         assert!(matches!(
             pca.validate(),
             Err(RejectReason::Malformed(message)) if message.contains("lineage_id")
+        ));
+    }
+
+    #[test]
+    fn non_positive_expires_at_is_rejected() {
+        let pca = PicPcaPayload::new(0, sample_map(), b"challenge-0".to_vec()).with_expires_at(0);
+
+        assert!(matches!(
+            pca.validate(),
+            Err(RejectReason::Malformed(message)) if message.contains("expires_at")
         ));
     }
 }

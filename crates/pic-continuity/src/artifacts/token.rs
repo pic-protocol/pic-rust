@@ -191,6 +191,14 @@ pub fn verify_token(
             decoded.typ
         )));
     }
+    if let Some(expected) = verifier.expected_jws_algorithm()
+        && decoded.alg != expected
+    {
+        return Err(ContinuityError::Jws(format!(
+            "alg must be {expected}, got {}",
+            decoded.alg
+        )));
+    }
     if !verifier.verify(&decoded.signing_input, &decoded.signature) {
         return Err(ContinuityError::Jws("signature verification failed".into()));
     }
