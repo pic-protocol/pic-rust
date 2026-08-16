@@ -184,6 +184,13 @@ pub fn verify_token(
     verifier: &dyn ArtifactVerifier,
 ) -> Result<PicTokenClaims, ContinuityError> {
     let decoded = decode_token(token)?;
+    if decoded.typ != crate::FORMAT_PIC_TOKEN_JWT {
+        return Err(ContinuityError::Jws(format!(
+            "typ must be {}, got {}",
+            crate::FORMAT_PIC_TOKEN_JWT,
+            decoded.typ
+        )));
+    }
     if !verifier.verify(&decoded.signing_input, &decoded.signature) {
         return Err(ContinuityError::Jws("signature verification failed".into()));
     }
@@ -246,5 +253,30 @@ mod tests {
 
         let verifier = Ed25519Verifier::new(key.verifying_key());
         assert!(verify_token(&tampered, &verifier).is_err());
+    }
+
+    #[test]
+    fn wrong_typ_fails_even_with_valid_signature() {
+        let key = SigningKey::generate(&mut OsRng);
+        let signer = Ed25519Signer::new(key.clone(), "kid");
+        let verifier = Ed25519Verifier::new(key.verifying_key());
+        let claims = PicTokenClaims::for_continuity(b"bytes");
+
+        let header = JwsHeader {
+            alg: "EdDSA".into(),
+            typ: "at+jwt".into(),
+        };
+        let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&header).unwrap());
+        let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&claims).unwrap());
+        let signing_input = format!("{header_b64}.{payload_b64}");
+        let signature = signer.sign(signing_input.as_bytes()).unwrap();
+        let token = format!(
+            "{signing_input}.{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature)
+        );
+
+        assert!(verify_token(&token, &verifier).is_err());
     }
 }

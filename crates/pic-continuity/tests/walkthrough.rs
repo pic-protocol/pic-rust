@@ -29,7 +29,8 @@
 use std::collections::BTreeMap;
 
 use ed25519_dalek::SigningKey;
-use pic_continuity::artifacts::{PicPcaPayload, ProofOfRelationship};
+use pic_continuity::artifacts::token::PicTokenClaims;
+use pic_continuity::artifacts::{PcaChallenge, PicPcaPayload, ProofOfRelationship};
 use pic_continuity::authority::attenuation::{Attenuations, ReferenceProfile};
 use pic_continuity::authority::bitmap::RemoveBitmap;
 use pic_continuity::authority::indexed::IndexedAuthorityMap;
@@ -38,8 +39,8 @@ use pic_continuity::error::{ContinuityError, RejectReason};
 use pic_continuity::por::PorValidator;
 use pic_continuity::prover::{CandidateRequest, build_candidate};
 use pic_continuity::trust::{
-    ArtifactVerifier, DefaultPolicy, Ed25519Signer, Ed25519Verifier, InMemoryCheckpoints,
-    NoRevocation,
+    ArtifactSigner, ArtifactVerifier, DefaultPolicy, Ed25519Signer, Ed25519Verifier,
+    InMemoryCheckpoints, NoRevocation,
 };
 use pic_continuity::verifier::{
     SettlementAuthority, SettlementContext, issue_settled, verify_settled,
@@ -110,6 +111,25 @@ fn worker(kid: &str) -> (Ed25519Signer, ProofOfRelationship) {
         evidence: key.verifying_key().to_bytes().to_vec(),
     };
     (Ed25519Signer::new(key, kid), por)
+}
+
+fn sign_claims_with_typ(claims: &PicTokenClaims, typ: &str, signer: &dyn ArtifactSigner) -> String {
+    use base64::Engine;
+
+    let header = serde_json::json!({
+        "alg": signer.jws_algorithm(),
+        "typ": typ,
+    });
+    let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(&header).unwrap());
+    let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(claims).unwrap());
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let signature = signer.sign(signing_input.as_bytes()).unwrap();
+    format!(
+        "{signing_input}.{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature)
+    )
 }
 
 fn ctx() -> SettlementContext {
@@ -484,4 +504,71 @@ fn tampered_candidate_continuity_is_rejected() {
         expect_reject(auth.settle(&forged, &ctx())),
         RejectReason::WorkloadSignature("candidate PIC Token JWT")
     );
+}
+
+#[test]
+fn settlement_rejects_non_pic_jwt_typ() {
+    let realm = realm();
+    let (settled0, store) = initialize(&realm);
+    let state0 = verify_settled(&settled0.token, &realm.verifier).unwrap();
+    let (worker1, por1) = worker("spiffe://acme/ns/docs/sa/worker-1");
+
+    let candidate = build_candidate(
+        &state0.pca_bytes,
+        CandidateRequest {
+            attenuations: Attenuations {
+                invariants: RemoveBitmap::from_indices(&[0]),
+                ..Default::default()
+            },
+            next_challenge: b"challenge-1".to_vec(),
+            proof_of_relationship: Some(por1),
+            ..Default::default()
+        },
+        &worker1,
+        None,
+    )
+    .unwrap();
+
+    let claims = PicTokenClaims::for_continuity(&candidate.continuity_bytes);
+    let wrong_typ = sign_claims_with_typ(&claims, "at+jwt", &worker1);
+
+    let auth = SettlementAuthority {
+        trusted: &store,
+        por: &StubPor,
+        revocation: &NoRevocation,
+        policy: &DefaultPolicy,
+        order: &ReferenceProfile,
+        realm: &realm.signer,
+    };
+    assert!(matches!(
+        expect_reject(auth.settle(&wrong_typ, &ctx())),
+        RejectReason::Malformed(_)
+    ));
+}
+
+#[test]
+fn issue_settled_rejects_invalid_checkpoint_payloads() {
+    let realm = realm();
+    let map = IndexedAuthorityMap::from_logical(&walkthrough_logical()).unwrap();
+
+    let empty_challenge = PicPcaPayload::new(0, map.clone(), vec![]);
+    assert!(matches!(
+        issue_settled(empty_challenge, &realm.signer, &ctx()),
+        Err(ContinuityError::Reject(RejectReason::NextChallengeInvalid))
+    ));
+
+    let empty_contract = PicPcaPayload {
+        profile: pic_continuity::PROFILE_0_2.into(),
+        position: 0,
+        context_of_authority: IndexedAuthorityMap::default(),
+        challenge: PcaChallenge {
+            next_challenge: b"challenge-0".to_vec(),
+        },
+    };
+    assert!(matches!(
+        issue_settled(empty_contract, &realm.signer, &ctx()),
+        Err(ContinuityError::Reject(
+            RejectReason::EmptyExecutionContract
+        ))
+    ));
 }

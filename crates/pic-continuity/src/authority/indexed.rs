@@ -166,6 +166,64 @@ impl IndexedAuthorityMap {
     pub fn contains_contract_entry(&self, entry: &KvTuple) -> bool {
         self.execution_contract.values().any(|t| t == entry)
     }
+
+    /// Validates that this Indexed Authority Map is a Profile 0.2 canonical
+    /// materialized authority map suitable for signing inside a PCA
+    /// checkpoint.
+    pub fn validate(&self) -> Result<(), RejectReason> {
+        validate_contiguous_indexes(&self.invariants, "invariants")?;
+        validate_contiguous_indexes(&self.execution_contract, "execution_contract")?;
+
+        if let Some(identity_context) = &self.identity_context {
+            if identity_context.is_empty() {
+                return Err(RejectReason::Malformed(
+                    "identity_context must be omitted when empty".into(),
+                ));
+            }
+            validate_contiguous_indexes(identity_context, "identity_context")?;
+            validate_kv_section(identity_context)?;
+        }
+
+        if self.execution_contract.is_empty() {
+            return Err(RejectReason::EmptyExecutionContract);
+        }
+        validate_kv_section(&self.execution_contract)?;
+
+        for tuple in self.invariants.values() {
+            if tuple.0.is_empty() || tuple.1.is_empty() || tuple.2.is_empty() || tuple.3.is_empty()
+            {
+                return Err(RejectReason::Malformed(
+                    "invariant tuple members must be non-empty".into(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_contiguous_indexes<T>(
+    section: &BTreeMap<u32, T>,
+    section_name: &'static str,
+) -> Result<(), RejectReason> {
+    for (expected, actual) in section.keys().enumerate() {
+        if *actual != expected as u32 {
+            return Err(RejectReason::Malformed(format!(
+                "{section_name} indexes must be contiguous from 0"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_kv_section(section: &BTreeMap<u32, KvTuple>) -> Result<(), RejectReason> {
+    for (key, value) in section.values() {
+        if key.is_empty() {
+            return Err(RejectReason::InvalidAuthorityValue(key.clone()));
+        }
+        value.validate(key)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

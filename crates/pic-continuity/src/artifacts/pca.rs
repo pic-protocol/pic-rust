@@ -61,6 +61,15 @@ impl PicPcaPayload {
     pub fn check_profile(&self) -> Result<(), RejectReason> {
         check_profile("pic-pca+cose", &self.profile)
     }
+
+    /// Validates the checkpoint payload before it is signed or accepted.
+    pub fn validate(&self) -> Result<(), RejectReason> {
+        self.check_profile()?;
+        if self.challenge.next_challenge.is_empty() {
+            return Err(RejectReason::NextChallengeInvalid);
+        }
+        self.context_of_authority.validate()
+    }
 }
 
 /// COSE-signed PCA checkpoint.

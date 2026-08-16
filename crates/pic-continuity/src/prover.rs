@@ -103,7 +103,7 @@ pub fn build_candidate(
         })?,
         None => pca_cose.payload_unverified()?,
     };
-    checkpoint.check_profile()?;
+    checkpoint.validate()?;
 
     if request.next_challenge.is_empty() {
         return Err(RejectReason::NextChallengeInvalid.into());

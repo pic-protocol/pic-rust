@@ -30,7 +30,7 @@
 //! semantic checks run independently and are never skipped because a
 //! signature verified.
 
-use crate::artifacts::token::{PicTokenClaims, decode_token, sign_token, verify_token};
+use crate::artifacts::token::{DecodedToken, PicTokenClaims, decode_token, sign_token};
 use crate::artifacts::{
     PicContinuityCose, PicContinuityPayload, PicPcaCose, PicPcaPayload, PicTransitionCose,
     PicTransitionPayload, artifact_sha256,
@@ -68,8 +68,12 @@ pub fn verify_settled(
     token: &str,
     realm: &dyn ArtifactVerifier,
 ) -> Result<SettledState, ContinuityError> {
-    let claims =
-        verify_token(token, realm).map_err(|_| RejectReason::RealmSignature("PIC Token JWT"))?;
+    let decoded = decode_token(token)?;
+    check_token_type(&decoded)?;
+    if !realm.verify(&decoded.signing_input, &decoded.signature) {
+        return Err(RejectReason::RealmSignature("PIC Token JWT").into());
+    }
+    let claims = decoded.claims;
     check_claims_profile(&claims)?;
 
     let continuity_bytes = claims.root_bytes()?;
@@ -98,7 +102,7 @@ pub fn verify_settled(
             }
         })
         .map_err(|_| RejectReason::RealmSignature("PIC PCA COSE"))?;
-    checkpoint.check_profile()?;
+    checkpoint.validate()?;
 
     Ok(SettledState {
         claims,
@@ -151,6 +155,8 @@ pub fn issue_settled(
     realm: &dyn ArtifactSigner,
     ctx: &SettlementContext,
 ) -> Result<SettledIssue, ContinuityError> {
+    checkpoint.validate()?;
+
     let pca_cose: PicPcaCose =
         CoseSigned::sign_with(&checkpoint, realm.kid(), realm.cose_algorithm(), |data| {
             realm.sign(data)
@@ -216,6 +222,7 @@ impl SettlementAuthority<'_> {
         //      accepting authenticity; obtain pic.root bytes.
         let decoded = decode_token(candidate_token)
             .map_err(|e| RejectReason::Malformed(format!("candidate token: {e}")))?;
+        check_token_type(&decoded)?;
         check_claims_profile(&decoded.claims)?;
         let continuity_bytes = decoded
             .claims
@@ -291,7 +298,7 @@ impl SettlementAuthority<'_> {
             .map_err(|e| RejectReason::Malformed(format!("checkpoint: {e}")))?
             .payload_unverified()
             .map_err(|e| RejectReason::Malformed(format!("checkpoint: {e}")))?;
-        checkpoint.check_profile()?;
+        checkpoint.validate()?;
 
         // 13. Recompute SHA-256(exact root.pca bytes) and compare.
         continuity.check_root_hash()?;
@@ -362,6 +369,18 @@ impl SettlementAuthority<'_> {
             transition.challenge.next_challenge.clone(),
         );
         issue_settled(next_checkpoint, self.realm, ctx)
+    }
+}
+
+fn check_token_type(decoded: &DecodedToken) -> Result<(), RejectReason> {
+    if decoded.typ == crate::FORMAT_PIC_TOKEN_JWT {
+        Ok(())
+    } else {
+        Err(RejectReason::Malformed(format!(
+            "PIC Token JWT typ must be {}, got {}",
+            crate::FORMAT_PIC_TOKEN_JWT,
+            decoded.typ
+        )))
     }
 }
 
