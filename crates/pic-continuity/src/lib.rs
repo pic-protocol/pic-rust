@@ -30,6 +30,8 @@
 //!   current trusted checkpoint;
 //! - [`verifier`] — ordinary verification of settled artifacts and the
 //!   settlement-authority validation procedure (the role PIC-X realizes);
+//! - [`jwk`] — verification keys from published JWKs, and the algorithm
+//!   agreement that stops an artifact choosing how it is verified;
 //! - [`por`] — the pluggable Proof of Relationship validation boundary;
 //! - [`trust`] — the traits a host supplies (trusted checkpoints, key
 //!   material, revocation, policy);
@@ -127,6 +129,7 @@ pub mod artifacts;
 pub mod authority;
 pub mod cose;
 pub mod error;
+pub mod jwk;
 pub mod por;
 pub mod proposal;
 pub mod prover;
