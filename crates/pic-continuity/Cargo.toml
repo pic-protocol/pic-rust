@@ -1,13 +1,17 @@
 [package]
-name = "pic-pca"
+name = "pic-continuity"
 version.workspace = true
 edition.workspace = true
-description = "PCA and PoC types for PIC Protocol"
+description = "PIC Profile 0.2 continuity artifacts, Prover, and Verifier for the PIC Protocol"
 license.workspace = true
 repository.workspace = true
+documentation = "https://docs.rs/pic-continuity"
+readme = "README.md"
+keywords = ["authorization", "security", "distributed-systems", "cose", "jwt"]
+categories = ["authentication", "cryptography"]
 
 [lib]
-name = "pic_pca"
+name = "pic_continuity"
 
 [features]
 default = ["ed25519"]
@@ -24,26 +28,11 @@ serde_bytes.workspace = true
 ciborium.workspace = true
 coset.workspace = true
 thiserror.workspace = true
+sha2.workspace = true
+base64.workspace = true
 
 # Crypto - optional
 ed25519-dalek = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 p256 = { workspace = true, optional = true }
 p384 = { workspace = true, optional = true }
-
-[dev-dependencies]
-criterion.workspace = true
-ed25519-dalek.workspace = true
-rand.workspace = true
-
-[[bench]]
-name = "pca_serialization"
-harness = false
-
-[[bench]]
-name = "pca_benchmark"
-harness = false
-
-[[bench]]
-name = "poc_benchmark"
-harness = false

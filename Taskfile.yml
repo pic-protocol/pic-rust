@@ -10,56 +10,20 @@ tasks:
       - cargo fmt --all
 
   # Crates
-  pca-test:
+  continuity-test:
     dir:  ./
     cmds:
-        - cargo test --package pic-pca      
+        - cargo test --package pic-continuity
     silent: true
 
-  pca-bench:
-    dir:  ./
-    cmds:
-        - cargo bench --package pic-pca      
-    silent: true
-
-  pca-bench-sz:
-    dir:  ./
-    cmds:
-        - cargo bench -p pic-pca --bench pca_serialization
-    silent: true
-
-  pca-bench-pca:
-    dir:  ./
-    cmds:
-        - cargo bench -p pic-pca --bench pca_benchmark -- sign_ed25519
-    silent: true
-
-  pca-bench-poc:
-    dir:  ./
-    cmds:
-        - cargo bench -p pic-pca --bench poc_benchmark -- sign_ed25519
-    silent: true
-
-  cat-test:
-    dir:  ./
-    cmds:
-        - cargo test --package pic-cat      
-    silent: true
-
-  cat-bench:
-    dir:  ./
-    cmds:
-        - cargo bench --package pic-cat      
-    silent: true
-  
   pic-test:
     dir:  ./
     cmds:
-        - cargo test --workspace      
+        - cargo test --workspace
     silent: true
 
   pic-bench:
     dir:  ./
     cmds:
-        -  cargo bench --workspace      
+        -  cargo bench --workspace
     silent: true

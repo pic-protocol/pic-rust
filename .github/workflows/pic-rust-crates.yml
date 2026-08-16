@@ -35,8 +35,7 @@ jobs:
       run: |
         echo "=== Expected: ${VERSION} ==="
         grep -E "^version" Cargo.toml || true
-        grep -E "^version" crates/pic-pca/Cargo.toml || true
-        grep -E "^version" crates/pic-cat/Cargo.toml || true
+        grep -E "^version" crates/pic-continuity/Cargo.toml || true
 
     - name: Build workspace
       run: cargo build --release --workspace
@@ -44,25 +43,14 @@ jobs:
     - name: Run tests
       run: cargo test --workspace
 
-    - name: Publish pic-pca
-      run: cargo publish -p pic-pca --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-    - name: Wait for crates.io
-      run: sleep 30
-
-    - name: Update pic-cat dependency
-      run: sed -i "s|pic-pca = { path = \"../pic-pca\" }|pic-pca = \"${VERSION}\"|" crates/pic-cat/Cargo.toml
-
-    - name: Publish pic-cat
-      run: cargo publish -p pic-cat --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    - name: Publish pic-continuity
+      run: cargo publish -p pic-continuity --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
     - name: Wait for crates.io
       run: sleep 30
 
     - name: Update root dependencies
-      run: |
-        sed -i "s|pic-pca = { path = \"crates/pic-pca\" }|pic-pca = \"${VERSION}\"|" Cargo.toml
-        sed -i "s|pic-cat = { path = \"crates/pic-cat\" }|pic-cat = \"${VERSION}\"|" Cargo.toml
+      run: sed -i "s|pic-continuity = { path = \"crates/pic-continuity\" }|pic-continuity = \"${VERSION}\"|" Cargo.toml
 
     - name: Publish pic-protocol
       run: cargo publish --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

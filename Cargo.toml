@@ -15,23 +15,19 @@ name = "pic"
 [features]
 default = ["ed25519"]
 # Crypto
-ed25519 = ["pic-pca/ed25519"]
-p256 = ["pic-pca/p256"]
-p384 = ["pic-pca/p384"]
+ed25519 = ["pic-continuity/ed25519"]
+p256 = ["pic-continuity/p256"]
+p384 = ["pic-continuity/p384"]
 crypto-full = ["ed25519", "p256", "p384"]
-# Integrations
-ssi = ["pic-cat/ssi"]
-oauth = ["pic-cat/oauth"]
-integrations-full = ["ssi", "oauth"]
 # Everything
-full = ["crypto-full", "integrations-full"]
+full = ["crypto-full"]
 
 [workspace]
 members = ["crates/*"]
 
 [workspace.package]
 edition = "2024"
-version = "0.0.0"
+version = "0.2.0"
 license = "Apache-2.0"
 repository = "https://github.com/pic-protocol/pic-rust"
 
@@ -47,7 +43,10 @@ coset = "0.4"
 
 # Error handling
 thiserror = "2"
-anyhow = "1"
+
+# Hashing and encoding
+sha2 = "0.10"
+base64 = "0.22"
 
 # Crypto - Ed25519
 ed25519-dalek = { version = "2", features = ["rand_core"] }
@@ -57,25 +56,10 @@ rand = "0.8"
 p256 = { version = "0.13", features = ["ecdsa"] }
 p384 = { version = "0.13", features = ["ecdsa"] }
 
-# SSI - Decentralized Identity (SpruceID)
-ssi = { version = "0.12", features = ["ed25519", "w3c"] }
-
-# OAuth
-oauth2 = "4.4"
-
-# Async
-tokio = { version = "1", features = ["full"] }
-
-# Utilities
-chrono = "0.4"
-uuid = { version = "1", features = ["v4"] }
-
-# CLI
-clap = { version = "4", features = ["derive"] }
-
-# Benchmark
-criterion = { version = "0.5", features = ["html_reports"] }
-
 [dependencies]
-pic-pca = { path = "crates/pic-pca" }
-pic-cat = { path = "crates/pic-cat" }
+pic-continuity = { path = "crates/pic-continuity" }
+
+[dev-dependencies]
+# For the crate-level doctest (Ed25519 example).
+ed25519-dalek.workspace = true
+rand.workspace = true
