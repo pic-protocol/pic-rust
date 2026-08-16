@@ -28,7 +28,7 @@ jobs:
 
     - name: Bump version in Cargo.toml
       run: |
-        # Unica riga version = "..." è in [workspace.package]
+        # The only bare version line lives in [workspace.package].
         sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
         sed -i "s|pic-continuity = { path = \"crates/pic-continuity\", version = \".*\" }|pic-continuity = { path = \"crates/pic-continuity\", version = \"${VERSION}\" }|" Cargo.toml
 
