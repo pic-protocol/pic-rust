@@ -37,7 +37,8 @@
 //!
 //! # Quick start
 //!
-//! ```
+#![cfg_attr(feature = "ed25519", doc = "```")]
+#![cfg_attr(not(feature = "ed25519"), doc = "```ignore")]
 //! use pic::continuity::artifacts::PicPcaPayload;
 //! use pic::continuity::authority::{
 //!     AuthorityValue, IndexedAuthorityMap, Invariant, LogicalAuthority,

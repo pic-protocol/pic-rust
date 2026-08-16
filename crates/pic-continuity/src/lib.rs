@@ -55,7 +55,8 @@
 //! an OAuth-to-PIC token exchange) and any holder of the realm public key
 //! verifies the resulting PIC Token JWT offline:
 //!
-//! ```
+#![cfg_attr(feature = "ed25519", doc = "```")]
+#![cfg_attr(not(feature = "ed25519"), doc = "```ignore")]
 //! use pic_continuity::artifacts::PicPcaPayload;
 //! use pic_continuity::authority::{
 //!     AuthorityValue, IndexedAuthorityMap, Invariant, LogicalAuthority,
