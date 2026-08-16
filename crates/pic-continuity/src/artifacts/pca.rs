@@ -37,6 +37,12 @@ pub struct PcaChallenge {
 pub struct PicPcaPayload {
     /// PIC profile identifier; must equal [`crate::PROFILE_0_2`].
     pub profile: String,
+    /// Stable lineage identifier for this continuity chain.
+    ///
+    /// The same value is mirrored into PIC Token JWT `jti`, giving logs and
+    /// offline inspectors one correlation handle that survives advancement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage_id: Option<String>,
     /// Position of this checkpoint in its lineage, starting at `0`.
     pub position: u64,
     /// The canonical Indexed Authority Map in force at this checkpoint.
@@ -51,10 +57,23 @@ impl PicPcaPayload {
     pub fn new(position: u64, context: IndexedAuthorityMap, next_challenge: Vec<u8>) -> Self {
         Self {
             profile: crate::PROFILE_0_2.to_string(),
+            lineage_id: None,
             position,
             context_of_authority: context,
             challenge: PcaChallenge { next_challenge },
         }
+    }
+
+    /// Adds the stable lineage identifier mirrored into PIC Token JWT `jti`.
+    pub fn with_lineage_id(mut self, lineage_id: impl Into<String>) -> Self {
+        self.lineage_id = Some(lineage_id.into());
+        self
+    }
+
+    /// Carries a lineage identifier when the predecessor had one.
+    pub fn with_optional_lineage_id(mut self, lineage_id: Option<String>) -> Self {
+        self.lineage_id = lineage_id;
+        self
     }
 
     /// Rejects the payload unless `profile` is [`crate::PROFILE_0_2`].
@@ -67,6 +86,11 @@ impl PicPcaPayload {
         self.check_profile()?;
         if self.challenge.next_challenge.is_empty() {
             return Err(RejectReason::NextChallengeInvalid);
+        }
+        if self.lineage_id.as_deref().is_some_and(str::is_empty) {
+            return Err(RejectReason::Malformed(
+                "pca.lineage_id must not be empty".to_owned(),
+            ));
         }
         self.context_of_authority.validate()
     }
@@ -100,5 +124,27 @@ mod tests {
         let decoded: PicPcaPayload = ciborium::from_reader(buf.as_slice()).unwrap();
         assert_eq!(pca, decoded);
         assert!(decoded.check_profile().is_ok());
+    }
+
+    #[test]
+    fn lineage_id_roundtrips_when_present() {
+        let pca = PicPcaPayload::new(0, sample_map(), b"challenge-0".to_vec())
+            .with_lineage_id("picx-lineage-1");
+        let mut buf = Vec::new();
+        ciborium::into_writer(&pca, &mut buf).unwrap();
+        let decoded: PicPcaPayload = ciborium::from_reader(buf.as_slice()).unwrap();
+
+        assert_eq!(decoded.lineage_id.as_deref(), Some("picx-lineage-1"));
+        assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
+    fn empty_lineage_id_is_rejected() {
+        let pca = PicPcaPayload::new(0, sample_map(), b"challenge-0".to_vec()).with_lineage_id("");
+
+        assert!(matches!(
+            pca.validate(),
+            Err(RejectReason::Malformed(message)) if message.contains("lineage_id")
+        ));
     }
 }

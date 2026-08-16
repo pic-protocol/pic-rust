@@ -29,7 +29,7 @@
 use std::collections::BTreeMap;
 
 use ed25519_dalek::SigningKey;
-use pic_continuity::artifacts::token::PicTokenClaims;
+use pic_continuity::artifacts::token::{PicTokenClaims, decode_token};
 use pic_continuity::artifacts::{PcaChallenge, PicPcaPayload, ProofOfRelationship};
 use pic_continuity::authority::attenuation::{Attenuations, ReferenceProfile};
 use pic_continuity::authority::bitmap::RemoveBitmap;
@@ -146,7 +146,8 @@ fn ctx() -> SettlementContext {
 /// Initializes checkpoint 0 and returns (settled issue, trusted store).
 fn initialize(realm: &Realm) -> (pic_continuity::verifier::SettledIssue, InMemoryCheckpoints) {
     let map = IndexedAuthorityMap::from_logical(&walkthrough_logical()).unwrap();
-    let pca0 = PicPcaPayload::new(0, map, b"challenge-0".to_vec());
+    let pca0 =
+        PicPcaPayload::new(0, map, b"challenge-0".to_vec()).with_lineage_id("walkthrough-lineage");
     let issued = issue_settled(pca0, &realm.signer, &ctx()).unwrap();
 
     let mut store = InMemoryCheckpoints::new();
@@ -162,6 +163,14 @@ fn end_to_end_two_hops() {
     // The settled token verifies end to end and exposes checkpoint 0.
     let state0 = verify_settled(&settled0.token, &realm.verifier).unwrap();
     assert_eq!(state0.checkpoint.position, 0);
+    assert_eq!(
+        state0.checkpoint.lineage_id.as_deref(),
+        Some("walkthrough-lineage")
+    );
+    assert_eq!(
+        decode_token(&settled0.token).unwrap().claims.jti.as_deref(),
+        Some("walkthrough-lineage")
+    );
     assert_eq!(state0.checkpoint.context_of_authority.invariants.len(), 2);
     assert_eq!(
         state0.checkpoint.context_of_authority.invariants[&0].0,
@@ -192,6 +201,14 @@ fn end_to_end_two_hops() {
     )
     .unwrap();
     assert_eq!(
+        decode_token(&candidate1.token)
+            .unwrap()
+            .claims
+            .jti
+            .as_deref(),
+        Some("walkthrough-lineage")
+    );
+    assert_eq!(
         candidate1
             .transition
             .attenuations
@@ -217,6 +234,14 @@ fn end_to_end_two_hops() {
 
     let state1 = verify_settled(&settled1.token, &realm.verifier).unwrap();
     assert_eq!(state1.checkpoint.position, 1);
+    assert_eq!(
+        state1.checkpoint.lineage_id.as_deref(),
+        Some("walkthrough-lineage")
+    );
+    assert_eq!(
+        decode_token(&settled1.token).unwrap().claims.jti.as_deref(),
+        Some("walkthrough-lineage")
+    );
     assert_eq!(state1.checkpoint.context_of_authority.invariants.len(), 1);
     // storage:save re-materialized at section-local index 0.
     assert_eq!(
@@ -268,6 +293,14 @@ fn end_to_end_two_hops() {
 
     let state2 = verify_settled(&settled2.token, &realm.verifier).unwrap();
     assert_eq!(state2.checkpoint.position, 2);
+    assert_eq!(
+        state2.checkpoint.lineage_id.as_deref(),
+        Some("walkthrough-lineage")
+    );
+    assert_eq!(
+        decode_token(&settled2.token).unwrap().claims.jti.as_deref(),
+        Some("walkthrough-lineage")
+    );
     // Zero executable authority; the checkpoint and its contract remain.
     assert!(state2.checkpoint.context_of_authority.invariants.is_empty());
     assert_eq!(
@@ -351,6 +384,32 @@ fn settlement_rejections() {
         expect_reject(auth_empty.settle(&candidate.token, &ctx())),
         RejectReason::UntrustedCheckpoint
     );
+
+    // Candidate JWT `jti` must keep the same stable lineage id as the predecessor PCA.
+    let candidate = build_candidate(&state0.pca_bytes, base_request(), &worker1, None).unwrap();
+    let mut decoded = decode_token(&candidate.token).unwrap();
+    decoded.claims.jti = Some("different-lineage".into());
+    let wrong_jti = sign_claims_with_typ(
+        &decoded.claims,
+        pic_continuity::FORMAT_PIC_TOKEN_JWT,
+        &worker1,
+    );
+    assert!(matches!(
+        expect_reject(auth.settle(&wrong_jti, &ctx())),
+        RejectReason::Malformed(message) if message.contains("jti")
+    ));
+
+    let mut decoded = decode_token(&candidate.token).unwrap();
+    decoded.claims.jti = None;
+    let missing_jti = sign_claims_with_typ(
+        &decoded.claims,
+        pic_continuity::FORMAT_PIC_TOKEN_JWT,
+        &worker1,
+    );
+    assert!(matches!(
+        expect_reject(auth.settle(&missing_jti, &ctx())),
+        RejectReason::Malformed(message) if message.contains("jti")
+    ));
 
     // A bitmap referencing a nonexistent index is unbuildable by the prover
     // and rejected by settlement when hand-crafted.
@@ -559,6 +618,7 @@ fn issue_settled_rejects_invalid_checkpoint_payloads() {
 
     let empty_contract = PicPcaPayload {
         profile: pic_continuity::PROFILE_0_2.into(),
+        lineage_id: None,
         position: 0,
         context_of_authority: IndexedAuthorityMap::default(),
         challenge: PcaChallenge {

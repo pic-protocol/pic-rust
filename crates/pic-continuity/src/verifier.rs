@@ -176,7 +176,15 @@ pub fn issue_settled(
     claims.aud = ctx.aud.clone();
     claims.iat = ctx.iat;
     claims.exp = ctx.exp;
-    claims.jti = ctx.jti.clone();
+    if let (Some(checkpoint_lineage), Some(context_jti)) = (&checkpoint.lineage_id, &ctx.jti)
+        && checkpoint_lineage != context_jti
+    {
+        return Err(RejectReason::Malformed(
+            "settlement context jti does not match pca.lineage_id".to_owned(),
+        )
+        .into());
+    }
+    claims.jti = ctx.jti.clone().or_else(|| checkpoint.lineage_id.clone());
     let token = sign_token(&claims, realm)?;
 
     Ok(SettledIssue {
@@ -299,6 +307,23 @@ impl SettlementAuthority<'_> {
             .payload_unverified()
             .map_err(|e| RejectReason::Malformed(format!("checkpoint: {e}")))?;
         checkpoint.validate()?;
+        if let Some(checkpoint_lineage) = checkpoint.lineage_id.as_deref() {
+            match decoded.claims.jti.as_deref() {
+                Some(candidate_jti) if candidate_jti == checkpoint_lineage => {}
+                Some(_) => {
+                    return Err(RejectReason::Malformed(
+                        "candidate token jti does not match checkpoint lineage_id".to_owned(),
+                    )
+                    .into());
+                }
+                None => {
+                    return Err(RejectReason::Malformed(
+                        "candidate token is missing jti for checkpoint lineage_id".to_owned(),
+                    )
+                    .into());
+                }
+            }
+        }
 
         // 13. Recompute SHA-256(exact root.pca bytes) and compare.
         continuity.check_root_hash()?;
@@ -367,7 +392,8 @@ impl SettlementAuthority<'_> {
             transition.position,
             next_authority,
             transition.challenge.next_challenge.clone(),
-        );
+        )
+        .with_optional_lineage_id(checkpoint.lineage_id.clone());
         issue_settled(next_checkpoint, self.realm, ctx)
     }
 }

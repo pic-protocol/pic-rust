@@ -27,7 +27,7 @@ members = ["crates/*"]
 
 [workspace.package]
 edition = "2024"
-version = "0.2.0"
+version = "0.2.1"
 license = "Apache-2.0"
 repository = "https://github.com/pic-protocol/pic-rust"
 
@@ -57,7 +57,7 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 p384 = { version = "0.13", features = ["ecdsa"] }
 
 [dependencies]
-pic-continuity = { path = "crates/pic-continuity" }
+pic-continuity = { path = "crates/pic-continuity", version = "0.2.1" }
 
 [dev-dependencies]
 # For the crate-level doctest (Ed25519 example).
